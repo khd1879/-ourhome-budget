@@ -75,9 +75,35 @@
     draw(`<div class="toolbar"><label>조회 월 <input id="month" type="month" value="${month}"></label><span id="sync">약 5초 간격 동기화</span>${btn('refresh','새로고침')}${btn('transaction','+ 거래 입력')}</div><nav>${[['home','요약'],['transactions','거래'],['analysis','분석'],['fixed','고정비'],['budgets','예산'],['accounts','자산'],['trash','휴지통'],['settings','설정']].map(([k,t])=>`<button data-action="tab" data-id="${k}" aria-current="${tab===k?'page':'false'}">${t}</button>`).join('')}</nav>${body}`);
   }
   function transactionList(list,trash=false) { return list.map(r=>`<article class="card row"><div><small>${esc(r.txn_date)} · ${labels[r.txn_type]} · ${esc(r.owner_label)}</small><h3>${esc(r.category_name)} · ${won(r.amount)}</h3><p>${esc(r.memo)} ${esc(r.payment_method)}</p><small>입력: ${esc(data.household_members.find(m=>m.user_id===r.entered_by)?.display_name||'구성원')}</small></div><div>${trash?btn('restore','복구',r.id)+btn('trash-delete-one','완전삭제',r.id):btn('repeat','다시 입력',r.id)+btn('transaction','수정',r.id)+btn('trash','휴지통으로',r.id)}</div></article>`).join('')||'<section class="card">기록이 없습니다.</section>'; }
+  function categoryNames(type, current='') {
+    const names=new Set();
+    (data.categories||[]).filter(c=>c.kind===type&&c.active).sort((a,b)=>(a.sort_order||0)-(b.sort_order||0)).forEach(c=>names.add(c.name.trim()));
+    (data.transactions||[]).filter(t=>t.txn_type===type).forEach(t=>{if(t.category_name?.trim())names.add(t.category_name.trim());});
+    if(current) names.add(current);
+    return [...names].filter(Boolean);
+  }
+  function categoryPicker(type,current='') {
+    const options=categoryNames(type,current);
+    return `<div id="category-picker">${select('category_name','카테고리',[['','카테고리 선택'],...options.map(n=>[n,n]),['__new_category__','＋ 새 카테고리 입력']],current)}<label id="new-category-label" hidden>새 카테고리 이름<input name="new_category" maxlength="100" disabled placeholder="예: 반려동물"></label></div>`.replace('<select name="category_name">','<select name="category_name" required>');
+  }
+  function changeCategory(event) {
+    const form=event.target.closest('form[data-form="transaction"]'); if(!form) return;
+    if(event.target.name==='txn_type') {
+      const previous=form.elements.category_name.value;
+      const keep=categoryNames(event.target.value).includes(previous)?previous:'';
+      form.querySelector('#category-picker').outerHTML=categoryPicker(event.target.value,keep);
+    }
+    if(event.target.name==='category_name') {
+      const adding=event.target.value==='__new_category__';
+      const input=form.elements.new_category;
+      input.disabled=!adding; input.required=adding; form.querySelector('#new-category-label').hidden=!adding;
+      if(adding) input.focus();
+    }
+    form.elements.category_name.required=true;
+  }
   function editor(kind,id) {
     let r={}, body='';
-    if(kind==='transaction') { r=data.transactions.find(x=>x.id===id)||{}; body=field('txn_date','날짜',r.txn_date||today(),'date','required')+select('txn_type','종류',Object.entries(labels).slice(0,3),r.txn_type||'expense')+field('amount','금액',r.amount??'','number','required min="0" step="0.01"')+field('category_name','카테고리',r.category_name||'식비','text','required list="categories" maxlength="100"')+`<datalist id="categories">${data.categories.filter(c=>c.active).map(c=>`<option value="${esc(c.name)}"></option>`).join('')}</datalist>`+select('owner_label','사용 구분',['공동','남편','아내'].map(x=>[x,x]),r.owner_label||'공동')+field('payment_method','결제수단',r.payment_method)+field('memo','메모',r.memo); }
+    if(kind==='transaction') { r=data.transactions.find(x=>x.id===id)||{}; body=field('txn_date','날짜',r.txn_date||today(),'date','required')+select('txn_type','종류',Object.entries(labels).slice(0,3),r.txn_type||'expense')+field('amount','금액',r.amount??'','number','required min="0" step="0.01"')+categoryPicker(r.txn_type||'expense',r.category_name||'')+select('owner_label','사용 구분',['공동','남편','아내'].map(x=>[x,x]),r.owner_label||'공동')+field('payment_method','결제수단',r.payment_method)+field('memo','메모',r.memo); }
     if(kind==='budget') { r=data.budgets.find(x=>x.id===id)||{}; body=field('category_name','카테고리',r.category_name,'text','required')+field('monthly_limit','월 예산',r.monthly_limit??'','number','required min="0" step="0.01"'); }
     if(kind==='account') { r=data.accounts.find(x=>x.id===id)||{}; body=select('kind','구분',[['asset','자산'],['liability','부채']],r.kind||'asset')+field('name','이름',r.name,'text','required')+field('amount','금액',r.amount??'','number','required min="0" step="0.01"')+field('category','분류',r.category); }
     if(kind==='goals') body=field('name','우리집 이름',house.name,'text','required')+field('annual_saving_goal','연간 저축·투자 목표',house.annual_saving_goal,'number','required min="0"')+field('monthly_investment_goal','월 투자 목표',house.monthly_investment_goal,'number','required min="0"');
@@ -90,6 +116,8 @@
   function csvCell(v) { let s=String(v??''); if(/^[=+\-@\t\r]/.test(s)) s="'"+s; return '"'+s.replace(/"/g,'""')+'"'; }
   async function submit(form,mode) {
     const f=Object.fromEntries(new FormData(form)), kind=form.dataset.form, id=form.dataset.id;
+    let categoryWarning='';
+    if(kind==='transaction') { if(f.category_name==='__new_category__') f.category_name=f.new_category; delete f.new_category; f.category_name=String(f.category_name||'').trim(); if(!f.category_name || f.category_name.length>100) throw Error('카테고리를 1~100자로 입력해 주세요.'); }
     if(kind==='fixed') { f.amount=number(f.amount); f.due_day=Number(f.due_day); if(!Number.isInteger(f.due_day)||f.due_day<1||f.due_day>31) throw Error('납부일은 1~31일입니다.'); if(id) await update('recurring_expenses',id,f); else await checked(db.from('recurring_expenses').insert({...f,household_id:house.id,created_by:user.id})); $('#editor').close(); await refresh(false); dashboard(); return; }
     if(kind==='auth') { const args={email:f.email.trim(),password:f.password}; if(mode==='signup') { await checked(db.auth.signUp({...args,options:{emailRedirectTo:location.origin+location.pathname}})); notice('회원가입을 요청했습니다. 이메일 인증 후 로그인해 주세요.'); } else { const result=await checked(db.auth.signInWithPassword(args)); await loadSession(result.session); } return; }
     if(kind==='create') { await checked(db.from('households').insert({name:f.name.trim(),owner_id:user.id})); await loadSession({user}); return; }
@@ -103,7 +131,8 @@
       if(id) await update(table,id,f);
       else { f.household_id=house.id; if(kind==='transaction') f.entered_by=user.id; if(kind==='account') f.created_by=user.id; await checked(db.from(table).insert(f)); }
     }
-    $('#editor').close(); await refresh(false); dashboard(); notice('저장했습니다.');
+    if(kind==='transaction') { try { await checked(db.from('categories').upsert({household_id:house.id,kind:f.txn_type,name:f.category_name,active:true},{onConflict:'household_id,kind,name'})); } catch(e) { categoryWarning=' 거래는 저장됐지만 카테고리 등록에 실패했습니다. 기록이 남아 있는 동안 목록에 표시됩니다.'; } }
+    $('#editor').close(); await refresh(false); dashboard(); notice('저장했습니다.'+categoryWarning);
   }
   // v1.0의 알려지지 않은 필드는 임의로 버리지 않고 미리보기에서 차단합니다.
   function normalizeImport(raw) {
@@ -255,6 +284,7 @@
     root.addEventListener('click',e=>{ const b=e.target.closest('[data-action]'); if(b) run(()=>action(b.dataset.action,b.dataset.id)); });
     root.addEventListener('input', e=>{ if(e.target.id==='search') { searchText=e.target.value; renderSearchResults(); } });
     root.addEventListener('change', e=>{ if(e.target.id==='filter-type') { filterType=e.target.value; renderSearchResults(); } if(e.target.id==='filter-owner') { filterOwner=e.target.value; renderSearchResults(); } });
+    root.addEventListener('change',changeCategory);
     root.addEventListener('submit',e=>{ e.preventDefault(); run(()=>submit(e.target,e.submitter?.value)); });
     root.addEventListener('change',e=>{ if(e.target.id==='month' && /^\d{4}-\d{2}$/.test(e.target.value)) {month=e.target.value;dashboard();} if(e.target.id==='import-file'&&e.target.files[0]) {const file=e.target.files[0]; run(async()=>importData(JSON.parse(await file.text())));e.target.value='';} });
     db.auth.onAuthStateChange((event,session)=>{ if(event==='SIGNED_OUT') { generation++; user=null;house=null;data={};login(); } else if(event==='SIGNED_IN' && session?.user.id!==user?.id) setTimeout(()=>run(()=>loadSession(session)),0); });
