@@ -12,7 +12,7 @@
   const sum = rows => rows.reduce((a,r) => a + Number(r.amount),0);
   let db, root, user, house, data = {}, tab = 'home', month = today().slice(0,7), busy = false, syncing = false, generation = 0, pendingRefresh = null;
   const $ = s => root.querySelector(s);
-  const btn = (action,title,id='') => `<button type="button" data-action="${action}" data-id="${esc(id)}">${esc(title)}</button>`;
+  const btn = (action,title,id='') => `<button type="button" data-action="${action}" data-id="${esc(id)}" ${action==='repeat'&&title!=='다시 입력'?'data-user-text':''}>${esc(title)}</button>`;
   const field = (name,title,value='',type='text',extra='') => {
     const money=moneyFields.has(name)&&type==='number';
     return `<label>${esc(title)}<input name="${name}" type="${money?'text':type}" value="${esc(money?formatMoney(value):value)}" ${money?'data-money inputmode="decimal" autocomplete="off"':''} ${extra}></label>`;
@@ -21,7 +21,7 @@
   const number = v => { v=String(v??'').replace(/,/g,'').trim(); if(!/^\d+(\.\d*)?$/.test(v)) throw Error('금액은 숫자로 입력해 주세요.'); if (String(v).trim()==='' || !Number.isFinite(Number(v)) || Number(v)<0) throw Error('금액은 0 이상의 숫자로 입력해 주세요.'); return Number(v); };
   const checked = async q => { const r = await q; if(r.error) throw r.error; return r.data; };
   function notice(message) { $('#notice').textContent = message; const d=$('#editor'); if(d?.open) { let p=d.querySelector('[role="status"]'); if(!p) {p=document.createElement('p');p.setAttribute('role','status');d.append(p);} p.textContent=message; } }
-  function draw(content) { root.innerHTML = `<header><div><small>OUR HOME · v${VERSION}</small><h1>부부 공동 가계부</h1></div>${user?btn('logout','로그아웃'):''}</header><p id="notice" role="status" aria-live="polite"></p>${content}<dialog id="editor"></dialog>`; }
+  function draw(content) { root.innerHTML = `<header><div><small>OUR HOME · v${VERSION}</small><h1>부부 공동 가계부</h1></div><div class="header-controls"><div class="languages" aria-label="Language"><button type="button" data-action="language" data-id="ko" aria-pressed="${appearance.language==='ko'}">🇰🇷 한국어</button><button type="button" data-action="language" data-id="ja" aria-pressed="${appearance.language==='ja'}">🇯🇵 日本語</button></div>${user?btn('logout','로그아웃'):''}</div></header><p id="notice" role="status" aria-live="polite"></p>${content}<dialog id="editor"></dialog>`; }
   async function run(fn) { if(busy) return; busy=true; root.setAttribute('aria-busy','true'); try { await fn(); } catch(e) { notice(`처리하지 못했습니다: ${e.message || e}`); } finally { busy=false; root.removeAttribute('aria-busy'); } }
   async function rows(table,hid) {
     let result=[];
@@ -68,9 +68,10 @@
     }
     if(tab==='transactions') body=`<h2>거래내역</h2>${transactionList(monthly.slice().sort((a,b)=>b.txn_date.localeCompare(a.txn_date)))}`;
     if(tab==='trash') { const trashed=tx.filter(r=>r.deleted_at); body=`<div class="trash-heading"><div><h2>휴지통</h2><p>${trashed.length}건 · 완전삭제한 거래는 복구할 수 없습니다.</p></div><div class="trash-tools">${trashed.length?btn('trash-restore-all','전체복구')+btn('trash-delete-all','전체삭제'):''}</div></div>${transactionList(trashed,true)}`; }
-    if(tab==='budgets') body=`<h2>카테고리별 월 예산</h2>${btn('budget','예산 추가')}<div class="grid">${data.budgets.filter(r=>r.active).map(r=>{const used=sum(monthly.filter(t=>t.txn_type==='expense'&&t.category_name===r.category_name));return `<section class="card"><h3>${esc(r.category_name)}</h3><p>${won(used)} / ${won(r.monthly_limit)}</p><p>${used>r.monthly_limit?'초과 '+won(used-r.monthly_limit):'남음 '+won(r.monthly_limit-used)}</p>${btn('budget','수정',r.id)}${btn('hide-budget','삭제',r.id)}</section>`;}).join('')}</div>`;
-    if(tab==='accounts') { const assets=sum(data.accounts.filter(r=>r.kind==='asset')), debt=sum(data.accounts.filter(r=>r.kind==='liability')); body=`<section class="card"><h2>순자산 ${won(assets-debt)}</h2><p>자산 ${won(assets)} · 부채 ${won(debt)}</p></section>${btn('account','자산·부채 추가')}<div class="grid">${data.accounts.map(r=>`<section class="card"><small>${labels[r.kind]} · ${esc(r.category)}</small><h3>${esc(r.name)}</h3><p>${won(r.amount)}</p>${btn('account','수정',r.id)}${btn('delete-account','삭제',r.id)}</section>`).join('')}</div>`; }
-    if(tab==='settings') body=`<section class="card"><h2>${esc(house.name)}</h2><p>초대코드 <strong>${esc(house.invite_code)}</strong></p>${btn('copy','초대코드 복사')}<p>${data.household_members.map(m=>`${esc(m.display_name)} (${m.role==='owner'?'관리자':'구성원'})`).join(' · ')}</p>${btn('goals','목표 수정')}</section><section class="card"><h2>백업 및 가져오기</h2>${btn('json','서버 전체 JSON 백업')}${btn('csv','전체 거래 CSV 백업')}${btn('local','v1.0 로컬 데이터 가져오기')}<label>JSON 백업 가져오기<input type="file" id="import-file" accept=".json,application/json"></label><p>가져오기는 거래·예산·자산·카테고리를 추가합니다. 고정비 설정과 납부 연결의 전체 복원은 지원하지 않습니다. 적용 전 내용을 확인할 수 있습니다.</p></section><section class="card"><h2>카테고리</h2>${btn('category','카테고리 추가')}<p>${data.categories.filter(c=>c.active).map(c=>`${esc(c.name)} (${labels[c.kind]})`).join(' · ')}</p></section><section class="card"><h2>최근 변경이력</h2>${data.audit_logs.slice().sort((a,b)=>Number(b.id)-Number(a.id)).slice(0,50).map(r=>`<p>${esc(new Date(r.created_at).toLocaleString('ko-KR'))} · ${esc(data.household_members.find(m=>m.user_id===r.actor_id)?.display_name||'구성원')} · ${esc(r.entity_type)} ${esc(r.action)}</p>`).join('')||'<p>변경이력이 없습니다.</p>'}</section>`;
+    if(tab==='budgets') body=`<h2>카테고리별 월 예산</h2>${btn('budget','예산 추가')}<div class="grid">${data.budgets.filter(r=>r.active).map(r=>{const used=sum(monthly.filter(t=>t.txn_type==='expense'&&t.category_name===r.category_name));return `<section class="card"><h3>${userText(r.category_name)}</h3><p>${won(used)} / ${won(r.monthly_limit)}</p><p>${used>r.monthly_limit?'초과 '+won(used-r.monthly_limit):'남음 '+won(r.monthly_limit-used)}</p>${btn('budget','수정',r.id)}${btn('hide-budget','삭제',r.id)}</section>`;}).join('')}</div>`;
+    if(tab==='accounts') { const assets=sum(data.accounts.filter(r=>r.kind==='asset')), debt=sum(data.accounts.filter(r=>r.kind==='liability')); body=`<section class="card"><h2>순자산 ${won(assets-debt)}</h2><p>자산 ${won(assets)} · 부채 ${won(debt)}</p></section>${btn('account','자산·부채 추가')}<div class="grid">${data.accounts.map(r=>`<section class="card"><small>${labels[r.kind]} · ${esc(r.category)}</small><h3>${userText(r.name)}</h3><p>${won(r.amount)}</p>${btn('account','수정',r.id)}${btn('delete-account','삭제',r.id)}</section>`).join('')}</div>`; }
+    if(tab==='settings') body=`<section class="card"><h2>${userText(house.name)}</h2><p>초대코드 <strong>${esc(house.invite_code)}</strong></p>${btn('copy','초대코드 복사')}<p>${data.household_members.map(m=>`${userText(m.display_name)} (${m.role==='owner'?'관리자':'구성원'})`).join(' · ')}</p>${btn('goals','목표 수정')}</section><section class="card"><h2>백업 및 가져오기</h2>${btn('json','서버 전체 JSON 백업')}${btn('csv','전체 거래 CSV 백업')}${btn('local','v1.0 로컬 데이터 가져오기')}<label>JSON 백업 가져오기<input type="file" id="import-file" accept=".json,application/json"></label><p>가져오기는 거래·예산·자산·카테고리를 추가합니다. 고정비 설정과 납부 연결의 전체 복원은 지원하지 않습니다. 적용 전 내용을 확인할 수 있습니다.</p></section><section class="card"><h2>카테고리</h2>${btn('category','카테고리 추가')}<p>${data.categories.filter(c=>c.active).map(c=>`${userText(c.name)} (${labels[c.kind]})`).join(' · ')}</p></section><section class="card"><h2>최근 변경이력</h2>${data.audit_logs.slice().sort((a,b)=>Number(b.id)-Number(a.id)).slice(0,50).map(r=>`<p>${esc(new Date(r.created_at).toLocaleString('ko-KR'))} · ${userText(data.household_members.find(m=>m.user_id===r.actor_id)?.display_name||'구성원')} · ${esc(r.entity_type)} ${esc(r.action)}</p>`).join('')||'<p>변경이력이 없습니다.</p>'}</section>`;
+    if(tab==='settings') body=themeSettings()+body;
     if(tab==='saving') body=savingGoalsView();
     if(tab==='analysis') body=analysisView(active);
     if(tab==='fixed') body=fixedView();
@@ -78,7 +79,7 @@
     if(tab==='home') body=quickView(active)+body;
     draw(`<div class="toolbar"><label>조회 월 <input id="month" type="month" value="${month}"></label><span id="sync">약 5초 간격 동기화</span>${btn('refresh','새로고침')}${btn('transaction','+ 거래 입력')}</div><nav>${[['home','요약'],['transactions','거래'],['saving','목표 저축'],['analysis','분석'],['fixed','고정비'],['budgets','예산'],['accounts','자산'],['trash','휴지통'],['settings','설정']].map(([k,t])=>`<button data-action="tab" data-id="${k}" aria-current="${tab===k?'page':'false'}">${t}</button>`).join('')}</nav>${body}`);
   }
-  function transactionList(list,trash=false) { return list.map(r=>`<article class="card row"><div><small>${esc(r.txn_date)} · ${labels[r.txn_type]} · ${esc(r.owner_label)}</small><h3>${esc(r.category_name)} · ${won(r.amount)}</h3><p>${esc(r.memo)} ${esc(r.payment_method)}</p>${r.original_currency==='JPY'?`<small>¥${Number(r.original_amount).toLocaleString('ja-JP')} · 1엔 = ${esc(r.fx_rate)}원 · ${esc(r.fx_date||'직접 입력')}${r.fx_source==='manual_amount'?' · 실제 결제액 적용':''}</small><br>`:''}<small>입력: ${esc(data.household_members.find(m=>m.user_id===r.entered_by)?.display_name||'구성원')}</small></div><div>${trash?btn('restore','복구',r.id)+btn('trash-delete-one','완전삭제',r.id):btn('repeat','다시 입력',r.id)+btn('transaction','수정',r.id)+btn('trash','휴지통으로',r.id)}</div></article>`).join('')||'<section class="card">기록이 없습니다.</section>'; }
+  function transactionList(list,trash=false) { return list.map(r=>`<article class="card row"><div><small>${esc(r.txn_date)} · ${labels[r.txn_type]} · ${esc(r.owner_label)}</small><h3>${userText(r.category_name)} · ${won(r.amount)}</h3><p>${userText(r.memo)} ${userText(r.payment_method)}</p>${r.original_currency==='JPY'?`<small>¥${Number(r.original_amount).toLocaleString('ja-JP')} · 1엔 = ${esc(r.fx_rate)}원 · ${esc(r.fx_date||'직접 입력')}${r.fx_source==='manual_amount'?' · 실제 결제액 적용':''}</small><br>`:''}<small>입력: ${userText(data.household_members.find(m=>m.user_id===r.entered_by)?.display_name||'구성원')}</small></div><div>${trash?btn('restore','복구',r.id)+btn('trash-delete-one','완전삭제',r.id):btn('repeat','다시 입력',r.id)+btn('transaction','수정',r.id)+btn('trash','휴지통으로',r.id)}</div></article>`).join('')||'<section class="card">기록이 없습니다.</section>'; }
   function categoryNames(type, current='') {
     const names=new Set();
     (data.categories||[]).filter(c=>c.kind===type&&c.active).sort((a,b)=>(a.sort_order||0)-(b.sort_order||0)).forEach(c=>names.add(c.name.trim()));
@@ -207,6 +208,9 @@
     notice(`${count}건을 ${deleting?'완전삭제':'복구'}했습니다. 다른 기기에서 이미 처리한 거래는 제외됩니다.`);
   }
   async function action(name,id) {
+    if(name==='language'){appearance.language=id==='ja'?'ja':'ko';saveAppearance();localizeUI();return;}
+    if(name==='theme-preset'||name==='theme-reset'){const selected=name==='theme-reset'?'ivory':id;if(!palettes[selected])return;appearance={...appearance,preset:selected,background:palettes[selected][0],button:palettes[selected][1]};saveAppearance();applyAppearance();dashboard();return;}
+
     if(name==='saving-goal-new'||name==='saving-goal-edit'){savingGoalEditor(id);return;}
     if(name==='saving-goal-add'||name==='saving-goal-spend'){goalTransaction(id,name==='saving-goal-add'?'investment':'expense');return;}
     if(name==='saving-goal-archive'||name==='saving-goal-unarchive'){if(name==='saving-goal-archive'&&!confirm('목표를 보관할까요? 연결 거래는 유지됩니다.'))return;await update('saving_goals',id,{active:name==='saving-goal-unarchive'});await refresh(false);dashboard();return;}
@@ -244,7 +248,7 @@
     const categories=new Map(); active.filter(r=>r.txn_type==='expense'&&r.txn_date.startsWith(month)).forEach(r=>categories.set(r.category_name,(categories.get(r.category_name)||0)+Number(r.amount)));
     const history=Array.from({length:6},(_,i)=>{const key=previousMonth(month,i-5);return {key,...monthlySummary(active,key)};});
     const max=Math.max(1,...history.flatMap(r=>[r.income,r.expense,r.investment]));
-    return `<div class="section-title"><small>MONTHLY INSIGHTS</small><h2>우리집의 한 달, 숫자로 보기</h2><p>전월 전체와 비교합니다. 이번 달이 진행 중이면 비교 금액도 달라질 수 있어요.</p></div><div class="grid">${['income','expense','investment'].map(k=>`<section class="card"><small>${labels[k]}</small><h2>${won(now[k])}</h2><p>${changeLabel(now[k],before[k])}</p></section>`).join('')}</div><section class="card"><h2>최근 6개월 흐름</h2><p class="legend">● 수입 <span>● 지출</span> <em>● 저축·투자</em></p><div class="chart">${history.map(r=>`<div class="chart-col"><div class="bars">${['income','expense','investment'].map(k=>`<div class="bar ${k}" style="height:${r[k]/max*150}px" title="${r.key} ${labels[k]} ${won(r[k])}" aria-label="${r.key} ${labels[k]} ${won(r[k])}"></div>`).join('')}</div><small>${r.key.slice(2)}</small></div>`).join('')}</div><details><summary>월별 금액 보기</summary>${history.map(r=>`<p>${r.key} · 수입 ${won(r.income)} / 지출 ${won(r.expense)} / 투자 ${won(r.investment)}</p>`).join('')}</details></section><section class="card"><h2>어디에 가장 많이 썼을까?</h2>${[...categories].sort((a,b)=>b[1]-a[1]).map(([k,v])=>`<div class="category-row"><div><strong>${esc(k)}</strong><span>${won(v)} · ${(v/Math.max(now.expense,1)*100).toFixed(1)}%</span></div><progress value="${v}" max="${Math.max(now.expense,1)}"></progress></div>`).join('')||'<p>이번 달 지출을 입력하면 분석이 나타납니다.</p>'}</section>`;
+    return `<div class="section-title"><small>MONTHLY INSIGHTS</small><h2>우리집의 한 달, 숫자로 보기</h2><p>전월 전체와 비교합니다. 이번 달이 진행 중이면 비교 금액도 달라질 수 있어요.</p></div><div class="grid">${['income','expense','investment'].map(k=>`<section class="card"><small>${labels[k]}</small><h2>${won(now[k])}</h2><p>${changeLabel(now[k],before[k])}</p></section>`).join('')}</div><section class="card"><h2>최근 6개월 흐름</h2><p class="legend">● 수입 <span>● 지출</span> <em>● 저축·투자</em></p><div class="chart">${history.map(r=>`<div class="chart-col"><div class="bars">${['income','expense','investment'].map(k=>`<div class="bar ${k}" style="height:${r[k]/max*150}px" title="${r.key} ${labels[k]} ${won(r[k])}" aria-label="${r.key} ${labels[k]} ${won(r[k])}"></div>`).join('')}</div><small>${r.key.slice(2)}</small></div>`).join('')}</div><details><summary>월별 금액 보기</summary>${history.map(r=>`<p>${r.key} · 수입 ${won(r.income)} / 지출 ${won(r.expense)} / 투자 ${won(r.investment)}</p>`).join('')}</details></section><section class="card"><h2>어디에 가장 많이 썼을까?</h2>${[...categories].sort((a,b)=>b[1]-a[1]).map(([k,v])=>`<div class="category-row"><div><strong>${userText(k)}</strong><span>${won(v)} · ${(v/Math.max(now.expense,1)*100).toFixed(1)}%</span></div><progress value="${v}" max="${Math.max(now.expense,1)}"></progress></div>`).join('')||'<p>이번 달 지출을 입력하면 분석이 나타납니다.</p>'}</section>`;
   }
   function quickView(active) { const unique=new Map(); active.slice().sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at))).forEach(r=>{const k=r.txn_type+'|'+r.category_name+'|'+r.amount;if(!unique.has(k))unique.set(k,r);}); return `<section class="card quick"><small>ONE MORE, EASILY</small><h2>자주 쓰는 기록, 한 번 더</h2><p>최근 거래를 불러오고 금액만 바꿔 저장하세요.</p>${[...unique.values()].slice(0,5).map(r=>btn('repeat',`${r.category_name} · ${won(r.amount)}`,r.id)).join('')||btn('transaction','첫 거래 입력하기')}</section>`; }
   function repeatTransaction(id) { editor('transaction',id); const form=$('#editor form'); form.dataset.id=''; form.elements.txn_date.value=today(); $('#editor h2').textContent='거래 다시 입력'; if(form.elements.original_currency.value==='JPY') toggleFx(form,true); }
@@ -255,7 +259,7 @@
   function paymentFor(r) { return data.recurring_payments.find(p=>p.expense_id===r.id&&p.month===month+'-01'&&data.transactions.some(t=>t.id===p.transaction_id&&!t.deleted_at)); }
   function fixedView() {
     const list=data.recurring_expenses.filter(r=>r.active).sort((a,b)=>a.due_day-b.due_day), unpaid=list.filter(r=>!paymentFor(r));
-    return `<div class="section-title"><small>MONTHLY ROUTINE</small><h2>매달 나가는 돈, 놓치지 않게</h2><p>실제로 납부했을 때 ‘납부 기록’을 누르면 지출에 한 번만 반영됩니다.</p></div><div class="grid"><section class="card"><small>등록 고정비</small><h2>${won(sum(list))}</h2></section><section class="card"><small>미납부 예정액</small><h2>${won(sum(unpaid))}</h2></section></div>${btn('fixed-new','+ 고정비 등록')}<div class="grid">${list.map(r=>{const paid=paymentFor(r);return `<section class="card"><small>${esc(r.category_name)} · 매월 ${r.due_day}일</small><h2>${esc(r.name)}</h2><h3>${won(r.amount)}</h3><p class="${paid?'paid':'pending'}">${paid?'납부 완료':dueDate(r)<today()?'납부일 지남 · 확인 필요':'납부 예정 '+dueDate(r)}</p>${paid?'':btn('fixed-pay','납부 기록',r.id)}${btn('fixed-edit','수정',r.id)}${btn('fixed-stop','중지',r.id)}</section>`;}).join('')||'<section class="card">통신비, 보험료, 월세부터 등록해 보세요.</section>'}</div>`;
+    return `${fixedOverview(list)}<div class="grid">${list.map(r=>{const paid=paymentFor(r);return `<section class="card"><small>${userText(r.category_name)} · 매월 ${r.due_day}일</small><h2>${userText(r.name)}</h2><h3>${won(r.amount)}</h3><p class="${paid?'paid':'pending'}">${paid?'납부 완료':dueDate(r)<today()?'납부일 지남 · 확인 필요':'납부 예정 '+dueDate(r)}</p>${paid?'':btn('fixed-pay','납부 기록',r.id)}${btn('fixed-edit','수정',r.id)}${btn('fixed-stop','중지',r.id)}</section>`;}).join('')||'<section class="card">통신비, 보험료, 월세부터 등록해 보세요.</section>'}</div>`;
   }
   function fixedEditor(id='') { const r=data.recurring_expenses.find(r=>r.id===id)||{}; const d=$('#editor'); d.innerHTML=`<h2>고정비 ${id?'수정':'등록'}</h2><form data-form="fixed" data-id="${esc(id)}">${field('name','이름',r.name||'','text','required maxlength="100"')}${field('amount','월 금액',r.amount??'','number','required min="0" step="0.01"')}${field('category_name','카테고리',r.category_name||'통신','text','required')}${field('due_day','납부일 (29~31일은 짧은 달에 말일 적용)',r.due_day||1,'number','required min="1" max="31" step="1"')}${select('owner_label','사용 구분',['공동','남편','아내'].map(x=>[x,x]),r.owner_label||'공동')}${field('payment_method','결제수단',r.payment_method||'')}<button>저장</button>${btn('close','취소')}</form>`;d.showModal(); }
   const THEME=`
@@ -353,7 +357,7 @@
   }
   function savingGoalsView() {
     const goals=data.saving_goals.filter(g=>g.active).sort((a,b)=>a.target_date.localeCompare(b.target_date));
-    return `<div class="section-title"><small>SAVING FOR SOMETHING GOOD</small><h2>모으는 이유가 있는 저축</h2><p>저축·투자 거래를 연결하면 모은 금액에 더해집니다. 목표 자금으로 쓴 지출을 연결하면 차감됩니다.</p></div>${btn('saving-goal-new','＋ 목표 만들기')}<div class="grid">${goals.map(g=>{const s=goalStats(g);return `<section class="card"><small>목표일 ${esc(g.target_date)}</small><h2>${esc(g.name)}</h2><h3>${won(s.saved)} <small>/ ${won(g.target_amount)}</small></h3><progress aria-label="${esc(g.name)} 달성률" max="100" value="${Math.min(100,s.percent)}"></progress><p>${s.percent.toFixed(1)}% 달성 · ${s.remaining===0?'목표 달성!':'남은 금액 '+won(s.remaining)}</p><p>${s.remaining===0?'차곡차곡 모았어요.':s.months?`월 ${won(s.monthly)}씩 · 이번 달 포함 ${s.months}개월`:'목표일이 지났어요. 기한을 다시 설정해 주세요.'}</p>${s.saved<0?'<p>연결한 지출이 저축보다 많습니다. 거래 연결을 확인하세요.</p>':''}${btn('saving-goal-add','저축 입력',g.id)}${btn('saving-goal-spend','사용 입력',g.id)}${btn('saving-goal-edit','목표 수정',g.id)}${btn('saving-goal-archive','보관',g.id)}</section>`;}).join('')||'<section class="card">여행비, 비상금, 단기 적금 목표를 만들어 보세요.</section>'}</div><section class="card"><h2>목표 한눈에 보기</h2><div style="overflow-x:auto"><table style="width:100%;min-width:600px;text-align:left;border-collapse:collapse"><thead><tr>${['목표','목표금액','모은 금액','달성률','기한'].map(t=>`<th style="padding:12px">${t}</th>`).join('')}</tr></thead><tbody>${goals.map(g=>{const s=goalStats(g);return `<tr>${[esc(g.name),won(g.target_amount),won(s.saved),s.percent.toFixed(1)+'%',esc(g.target_date)].map(v=>`<td style="padding:12px;border-top:1px solid #eee">${v}</td>`).join('')}</tr>`;}).join('')}</tbody></table></div><p>진행률은 전체 기간의 연결 거래 기준입니다. 월 필요액은 이번 달부터 목표 월까지 균등하게 모으는 가정입니다.</p></section><section class="card"><h2>보관한 목표</h2>${data.saving_goals.filter(g=>!g.active).map(g=>`<p>${esc(g.name)} ${btn('saving-goal-unarchive','다시 표시',g.id)}</p>`).join('')||'<p>보관한 목표가 없습니다.</p>'}</section>`;
+    return `${goalOverview(goals)}<div class="grid">${goals.map(g=>{const s=goalStats(g);return `<section class="card"><small>목표일 ${esc(g.target_date)}</small><h2>${userText(g.name)}</h2><h3>${won(s.saved)} <small>/ ${won(g.target_amount)}</small></h3><progress aria-label="${esc(g.name)} 달성률" max="100" value="${Math.min(100,s.percent)}"></progress><p>${s.percent.toFixed(1)}% 달성 · ${s.remaining===0?'목표 달성!':'남은 금액 '+won(s.remaining)}</p><p>${s.remaining===0?'차곡차곡 모았어요.':s.months?`월 ${won(s.monthly)}씩 · 이번 달 포함 ${s.months}개월`:'목표일이 지났어요. 기한을 다시 설정해 주세요.'}</p>${s.saved<0?'<p>연결한 지출이 저축보다 많습니다. 거래 연결을 확인하세요.</p>':''}${btn('saving-goal-add','저축 입력',g.id)}${btn('saving-goal-spend','사용 입력',g.id)}${btn('saving-goal-edit','목표 수정',g.id)}${btn('saving-goal-archive','보관',g.id)}</section>`;}).join('')||'<section class="card">여행비, 비상금, 단기 적금 목표를 만들어 보세요.</section>'}</div><section class="card"><h2>목표 한눈에 보기</h2><div style="overflow-x:auto"><table style="width:100%;min-width:600px;text-align:left;border-collapse:collapse"><thead><tr>${['목표','목표금액','모은 금액','달성률','기한'].map(t=>`<th style="padding:12px">${t}</th>`).join('')}</tr></thead><tbody>${goals.map(g=>{const s=goalStats(g);return `<tr>${[userText(g.name),won(g.target_amount),won(s.saved),s.percent.toFixed(1)+'%',esc(g.target_date)].map(v=>`<td style="padding:12px;border-top:1px solid #eee">${v}</td>`).join('')}</tr>`;}).join('')}</tbody></table></div><p>진행률은 전체 기간의 연결 거래 기준입니다. 월 필요액은 이번 달부터 목표 월까지 균등하게 모으는 가정입니다.</p></section><section class="card"><h2>보관한 목표</h2>${data.saving_goals.filter(g=>!g.active).map(g=>`<p>${userText(g.name)} ${btn('saving-goal-unarchive','다시 표시',g.id)}</p>`).join('')||'<p>보관한 목표가 없습니다.</p>'}</section>`;
   }
   function savingGoalEditor(id='') {
     const g=data.saving_goals.find(x=>x.id===id)||{}; const d=$('#editor');
@@ -365,10 +369,316 @@
     changeCategory({target:f.elements.txn_type});f.elements.saving_goal_id.value=id;
   }
 
+  const preferenceKey='ourhome-appearance-v1';
+  let appearance={language:'ko',preset:'ivory',background:'#f7f6f2',button:'#343b58'};
+  try { const saved=JSON.parse(localStorage.getItem(preferenceKey)||'null'); if(saved) appearance={...appearance,...saved}; } catch {}
+  if(!['ko','ja'].includes(appearance.language))appearance.language='ko';
+  const palettes={ivory:['#f7f6f2','#343b58'],lavender:['#f3effa','#69548c'],navy:['#edf1f7','#243a60'],dark:['#181b25','#b7a4e3']};
+  const validColor=x=>/^#[0-9a-f]{6}$/i.test(x);
+  function luminance(hex) { const rgb=hex.slice(1).match(/../g).map(x=>parseInt(x,16)/255).map(v=>v<=.04045?v/12.92:((v+.055)/1.055)**2.4); return rgb[0]*.2126+rgb[1]*.7152+rgb[2]*.0722; }
+  function contrastText(color) { const l=luminance(color);return (l+.05)/.05>=1.05/(l+.05)?'#000000':'#ffffff'; }
+  function saveAppearance() { try {localStorage.setItem(preferenceKey,JSON.stringify(appearance));}catch{notice('이 기기에서 설정 저장을 사용할 수 없습니다. 현재 화면에만 적용됩니다.');} }
+  function applyAppearance() {
+    if(!validColor(appearance.background))appearance.background='#f7f6f2';if(!validColor(appearance.button))appearance.button='#343b58';
+    const dark=luminance(appearance.background)<.18;
+    let style=document.getElementById('appearance-style');if(!style){style=document.createElement('style');style.id='appearance-style';document.head.append(style);}
+    style.textContent=`:root{--page:${appearance.background};--button:${appearance.button};--button-text:${contrastText(appearance.button)};--ink:${dark?'#f2f1f6':'#292b3b'};--muted:${dark?'#c4c2cf':'#686676'};--surface:${dark?'#242735':'#ffffff'};--line:${dark?'#45485b':'#e5e2eb'};--soft:${dark?'#303447':'#f0eef6'}}
+      body{background:var(--page)!important}#ourhome-v11{color:var(--ink)!important}#ourhome-v11 .card,#ourhome-v11 dialog{background:var(--surface)!important;color:var(--ink)!important;border-color:var(--line)!important}
+      #ourhome-v11 p,#ourhome-v11 small{color:var(--muted)}#ourhome-v11 button{background:var(--button);color:var(--button-text)}#ourhome-v11 button:hover{filter:brightness(.94)}#ourhome-v11 nav button{background:transparent;color:var(--ink)}#ourhome-v11 nav button[aria-current=page]{background:var(--button);color:var(--button-text)}
+      #ourhome-v11 input,#ourhome-v11 select{background:var(--surface);color:var(--ink);border-color:var(--line)}#ourhome-v11 .quick{background:var(--soft)!important}#ourhome-v11 .quick button{background:var(--surface);color:var(--ink)}#ourhome-v11 header,#ourhome-v11 nav{border-color:var(--line)}
+      #ourhome-v11 .hero{padding:30px;border-radius:24px;background:var(--soft);margin:24px 0}#ourhome-v11 .hero-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap}#ourhome-v11 .hero h2{font-size:27px;margin:10px 0}#ourhome-v11 .hero-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:24px 0}#ourhome-v11 .hero-stat{background:var(--surface);padding:18px;border-radius:16px}#ourhome-v11 .hero-stat strong{display:block;margin-top:9px;font-size:23px;overflow-wrap:anywhere}
+      #ourhome-v11 details.help{margin-top:18px;font-size:13px}#ourhome-v11 details.help summary{cursor:pointer;color:var(--muted)}#ourhome-v11 .hero progress{height:10px}#ourhome-v11 .header-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap}#ourhome-v11 .languages{display:flex;gap:3px}#ourhome-v11 .languages button{font-size:12px;padding:8px;background:var(--surface);color:var(--ink);border:1px solid var(--line)}#ourhome-v11 .languages button[aria-pressed=true]{outline:2px solid var(--button);outline-offset:-2px}
+      #ourhome-v11 .theme-options{display:flex;flex-wrap:wrap;gap:8px}#ourhome-v11 .theme-options button{background:var(--surface);color:var(--ink);border:1px solid var(--line)}#ourhome-v11 .swatch{display:inline-block;width:14px;height:14px;border-radius:50%;margin-right:6px;border:1px solid #999;vertical-align:middle}#ourhome-v11 .color-controls{display:flex;gap:22px;flex-wrap:wrap}#ourhome-v11 input[type=color]{width:80px;height:44px;padding:4px}#ourhome-v11 .theme-options button[aria-pressed=true]{outline:2px solid var(--button)}
+      @media(max-width:600px){#ourhome-v11 .hero{padding:20px}#ourhome-v11 .hero-stats{grid-template-columns:1fr;margin:18px 0}#ourhome-v11 .hero-stat{display:flex;align-items:center;justify-content:space-between;gap:12px}#ourhome-v11 .hero-stat strong{margin:0;font-size:21px}#ourhome-v11 .hero h2{font-size:24px}}
+    `;
+  }
+  function themeSettings() {return `<section class="card"><h2>화면 테마</h2><p>언어와 색상은 이 기기에만 저장됩니다.</p><div class="theme-options">${Object.entries(palettes).map(([id,colors])=>`<button type="button" data-action="theme-preset" data-id="${id}" aria-pressed="${appearance.preset===id}"><i class="swatch" style="background:${colors[1]}"></i>${{ivory:'아이보리',lavender:'라벤더',navy:'네이비',dark:'다크'}[id]}</button>`).join('')}</div><div class="color-controls"><label>배경색<input type="color" id="theme-background" value="${appearance.background}"></label><label>버튼색<input type="color" id="theme-button" value="${appearance.button}"></label></div><p>버튼의 글자색은 읽기 편하도록 자동 조정됩니다.</p>${btn('theme-reset','기본 테마로 복원')}</section>`;}
+  function summaryStat(label,value) {return `<div class="hero-stat"><small>${label}</small><strong>${won(value)}</strong></div>`;}
+  function goalOverview(goals) {
+    const target=goals.reduce((a,g)=>a+Number(g.target_amount),0), saved=goals.reduce((a,g)=>a+goalStats(g).saved,0);
+    const remaining=goals.reduce((a,g)=>a+goalStats(g).remaining,0),rate=target?Math.max(0,saved/target*100):0;
+    return `<section class="hero"><div class="hero-head"><div><small>OUR NEXT CHAPTER</small><h2>우리의 다음 목표를 위해</h2><p>작은 저축을 모아, 함께 원하는 내일로.</p></div>${btn('saving-goal-new','＋ 목표 만들기')}</div><div class="hero-stats">${summaryStat('전체 목표금액',target)}${summaryStat('지금까지 모은 금액',saved)}${summaryStat('목표별 남은 금액',remaining)}</div><p>전체 달성률 <strong>${rate.toFixed(1)}%</strong></p><progress aria-label="전체 달성률" max="100" value="${Math.min(100,rate)}"></progress><details class="help"><summary>ⓘ 사용 안내</summary><p>활성 목표의 전체 기간 거래를 합산합니다. 저축·투자는 더하고 연결 지출은 차감하며, 휴지통 거래는 제외합니다.</p><p>남은 금액은 목표별 부족액의 합입니다. 한 목표의 초과 저축은 다른 목표의 부족액을 줄이지 않습니다.</p><p>기존 거래를 수정해서 목표에 연결할 수 있습니다. 같은 돈을 다시 입력하지 마세요.</p></details></section>`;
+  }
+  function fixedOverview(list) {
+    const unpaid=list.filter(r=>!paymentFor(r)), paid=list.filter(r=>paymentFor(r));
+    const completed=paid.reduce((a,r)=>{const p=paymentFor(r);return a+Number(data.transactions.find(t=>t.id===p.transaction_id)?.amount||0);},0);
+    return `<section class="hero"><div class="hero-head"><div><small>MONTHLY ROUTINE</small><h2>이번 달 고정비, 한눈에</h2><p>${esc(month)} · 납부 완료 ${paid.length} / ${list.length}</p></div>${btn('fixed-new','＋ 고정비 등록')}</div><div class="hero-stats">${summaryStat('월 예정액',sum(list))}${summaryStat('납부 완료액',completed)}${summaryStat('남은 예정액',sum(unpaid))}</div><p>납부 진행률 ${list.length?Math.round(paid.length/list.length*100):0}%</p><progress aria-label="납부 진행률" max="${list.length||1}" value="${paid.length}"></progress><details class="help"><summary>ⓘ 사용 안내</summary><p>실제로 납부한 뒤 ‘납부 기록’을 누르면 지출에 한 번만 반영됩니다. 자동 출금 기능은 아닙니다.</p><p>예정액은 현재 등록 금액, 완료액은 연결된 실제 거래금액입니다. 금액을 수정했다면 두 값의 합계가 다를 수 있습니다.</p><p>29~31일이 없는 달에는 말일로 기록합니다. 휴지통에 있는 납부 거래는 미납부로 표시됩니다.</p></details></section>`;
+  }
+
+  const JA = Object.fromEntries(`
+부부 공동 가계부|ふたりの家計簿
+로그아웃|ログアウト
+로그인|ログイン
+회원가입|新規登録
+우리집 기록을 함께|家計の記録を一緒に
+각자의 이메일로 로그인하면 같은 가계부를 사용합니다.|それぞれのメールアドレスでログインすると、同じ家計簿を使えます。
+이메일|メールアドレス
+비밀번호|パスワード
+처음 오셨나요?|はじめての方へ
+우리집 이름|家計簿の名前
+우리집 만들기|家計簿を作成
+남편/관리자|夫／管理者
+초대코드로 참여|招待コードで参加
+12자리 초대코드|12桁の招待コード
+참여하기|参加する
+연결 중입니다…|接続しています…
+우리집을 불러오는 중입니다…|家計簿を読み込んでいます…
+조회 월|表示月
+약 5초 간격 동기화|約5秒ごとに同期
+새로고침|更新
+거래 입력|取引を入力
+목표 저축|目的別貯金
+고정비|固定費
+휴지통|ゴミ箱
+설정|設定
+요약|概要
+분석|分析
+거래|取引
+예산|予算
+자산|資産
+부채|負債
+순자산|純資産
+저축·투자|貯蓄・投資
+지출|支出
+수입|収入
+잔여현금|残りの現金
+연간 저축·투자 목표|年間の貯蓄・投資目標
+월 투자 목표|毎月の投資目標
+이번 달|今月
+최근 거래|最近の取引
+거래내역|取引履歴
+기록이 없습니다.|記録はありません。
+복구|復元
+완전삭제|完全削除
+전체삭제|すべて削除
+전체복구|すべて復元
+완전삭제한 거래는 복구할 수 없습니다.|完全削除した取引は復元できません。
+휴지통으로|ゴミ箱へ
+다시 입력|もう一度入力
+수정|編集
+입력:|入力者：
+공동|共有
+남편|夫
+아내|妻
+카테고리별 월 예산|カテゴリ別の月予算
+예산 추가|予算を追加
+초과|超過
+남음|残り
+삭제|削除
+자산·부채 추가|資産・負債を追加
+초대코드 복사|招待コードをコピー
+초대코드|招待コード
+관리자|管理者
+구성원|メンバー
+목표 수정|目標を編集
+백업 및 가져오기|バックアップと取り込み
+서버 전체 JSON 백업|サーバー全体のJSONバックアップ
+전체 거래 CSV 백업|全取引のCSVバックアップ
+v1.0 로컬 데이터 가져오기|v1.0のローカルデータを取り込む
+JSON 백업 가져오기|JSONバックアップを取り込む
+가져오기는 거래·예산·자산·카테고리를 추가합니다. 고정비 설정과 납부 연결의 전체 복원은 지원하지 않습니다. 적용 전 내용을 확인할 수 있습니다.|取り込みでは取引・予算・資産・カテゴリを追加します。固定費設定と支払リンクの完全復元には対応していません。適用前に内容を確認できます。
+카테고리 추가|カテゴリを追加
+카테고리|カテゴリ
+최근 변경이력|最近の変更履歴
+변경이력이 없습니다.|変更履歴はありません。
+날짜|日付
+종류|種類
+금액|金額
+카테고리 선택|カテゴリを選択
+새 카테고리 입력|新しいカテゴリを入力
+새 카테고리 이름|新しいカテゴリ名
+예: 반려동물|例：ペット
+사용 구분|使用者
+결제수단|支払方法
+메모|メモ
+이름|名前
+월 예산|月予算
+구분|区分
+분류|分類
+목표 설정|目標設定
+기록 입력|記録を入力
+저장 실패 시 상단 안내를 확인해 주세요.|保存に失敗した場合は、上の案内をご確認ください。
+저장|保存
+취소|キャンセル
+목표 이름|目標名
+예: 일본 여행|例：日本旅行
+목표 금액 (원)|目標金額（ウォン）
+목표일|目標日
+새 저축 목표|新しい貯金目標
+목표 만들기|目標を作成
+목표 연결 (선택)|目標にリンク（任意）
+연결 안 함|リンクしない
+저축·투자는 목표에 더하고, 지출은 목표에서 차감합니다. 수입에는 연결하지 않습니다.|貯蓄・投資は目標に加算し、支出は差し引きます。収入にはリンクしません。
+보관한 목표|保管中の目標
+보관한 목표가 없습니다.|保管中の目標はありません。
+다시 표시|再表示
+보관|保管
+저축 입력|貯金を入力
+사용 입력|使用額を入力
+목표 달성!|目標達成！
+남은 금액|残りの金額
+차곡차곡 모았어요.|こつこつ貯まりました。
+목표일이 지났어요. 기한을 다시 설정해 주세요.|目標日を過ぎました。期限を見直しましょう。
+연결한 지출이 저축보다 많습니다. 거래 연결을 확인하세요.|リンクした支出が貯蓄を上回っています。取引のリンクを確認してください。
+여행비, 비상금, 단기 적금 목표를 만들어 보세요.|旅行費、緊急資金、短期積立の目標を作りましょう。
+목표 한눈에 보기|目標一覧
+목표금액|目標金額
+모은 금액|貯めた金額
+달성률|達成率
+기한|期限
+목표|目標
+진행률은 전체 기간의 연결 거래 기준입니다. 월 필요액은 이번 달부터 목표 월까지 균등하게 모으는 가정입니다.|進捗は全期間のリンク済み取引に基づきます。月々の必要額は今月から目標月まで均等に貯める想定です。
+우리의 다음 목표를 위해|ふたりの次の目標へ
+작은 저축을 모아, 함께 원하는 내일로.|小さな積み重ねで、ふたりの望む明日へ。
+전체 목표금액|目標金額の合計
+지금까지 모은 금액|これまでに貯めた金額
+목표별 남은 금액|目標別の不足額の合計
+전체 달성률|全体の達成率
+사용 안내|使い方
+활성 목표의 전체 기간 거래를 합산합니다. 저축·투자는 더하고 연결 지출은 차감하며, 휴지통 거래는 제외합니다.|表示中の目標に紐づく全期間の取引を集計します。貯蓄・投資は加算し、支出は減算、ゴミ箱の取引は除外します。
+남은 금액은 목표별 부족액의 합입니다. 한 목표의 초과 저축은 다른 목표의 부족액을 줄이지 않습니다.|残額は各目標の不足額の合計です。ある目標の超過分は、別の目標の不足額から差し引きません。
+기존 거래를 수정해서 목표에 연결할 수 있습니다. 같은 돈을 다시 입력하지 마세요.|既存の取引を編集して目標にリンクできます。同じ金額を重複入力しないでください。
+이번 달 고정비, 한눈에|今月の固定費をひと目で
+월 예정액|月の予定額
+납부 완료액|支払済み額
+남은 예정액|残りの予定額
+납부 진행률|支払の進捗
+납부 완료|支払済み
+실제로 납부한 뒤 ‘납부 기록’을 누르면 지출에 한 번만 반영됩니다. 자동 출금 기능은 아닙니다.|実際の支払後に「支払を記録」を押すと支出に一度だけ反映されます。自動引落し機能ではありません。
+예정액은 현재 등록 금액, 완료액은 연결된 실제 거래금액입니다. 금액을 수정했다면 두 값의 합계가 다를 수 있습니다.|予定額は現在の登録額、支払済み額は実際の取引額です。金額を編集すると合計が一致しない場合があります。
+29~31일이 없는 달에는 말일로 기록합니다. 휴지통에 있는 납부 거래는 미납부로 표시됩니다.|29〜31日がない月は月末で記録します。支払取引がゴミ箱にある場合は未払いと表示します。
+납부일 지남 · 확인 필요|支払日を経過・要確認
+납부 예정|支払予定
+납부 기록|支払を記録
+중지|停止
+통신비, 보험료, 월세부터 등록해 보세요.|通信費、保険料、家賃から登録しましょう。
+등록|登録
+월 금액|毎月の金額
+납부일 (29~31일은 짧은 달에 말일 적용)|支払日（29〜31日がない月は月末）
+화면 테마|画面テーマ
+언어와 색상은 이 기기에만 저장됩니다.|言語と色はこの端末にのみ保存されます。
+아이보리|アイボリー
+라벤더|ラベンダー
+네이비|ネイビー
+다크|ダーク
+배경색|背景色
+버튼색|ボタンの色
+버튼의 글자색은 읽기 편하도록 자동 조정됩니다.|ボタンの文字色は読みやすい色に自動調整されます。
+기본 테마로 복원|標準テーマに戻す
+이 기기에서 설정 저장을 사용할 수 없습니다. 현재 화면에만 적용됩니다.|この端末では設定を保存できません。現在の画面にのみ適用されます。
+우리집의 한 달, 숫자로 보기|わが家の1か月を数字で
+전월 전체와 비교합니다. 이번 달이 진행 중이면 비교 금액도 달라질 수 있어요.|前月全体との比較です。今月が途中の場合、比較額も変わります。
+최근 6개월 흐름|直近6か月の推移
+월별 금액 보기|月別の金額を見る
+어디에 가장 많이 썼을까?|何に一番使った？
+이번 달 지출을 입력하면 분석이 나타납니다.|今月の支出を入力すると分析が表示されます。
+지난달과 동일|前月と同じ
+지난달 기록 없음|前月の記録なし
+자주 쓰는 기록, 한 번 더|よく使う記録を、もう一度
+최근 거래를 불러오고 금액만 바꿔 저장하세요.|最近の取引を呼び出し、金額を変えて保存できます。
+첫 거래 입력하기|最初の取引を入力
+거래 다시 입력|取引をもう一度入力
+거래 찾기|取引を検索
+검색|検索
+카테고리, 메모, 결제수단|カテゴリ、メモ、支払方法
+전체|すべて
+통화|通貨
+원화 KRW|ウォン KRW
+엔화 JPY|日本円 JPY
+엔화 금액|円の金額
+적용 환율 (1엔당 원)|適用レート（1円あたりのウォン）
+최신 환율 조회|最新レートを取得
+원화 반영 방식|ウォンへの反映方法
+환율로 자동 계산|レートで自動計算
+실제 원화 결제금액 직접 입력|実際のウォン決済額を入力
+원화 반영 금액|反映するウォン金額
+환율 기준일|レート基準日
+직접 입력 환율|手入力レート
+직접 조정|手動調整
+Frankfurter 일별 참고환율|Frankfurterの日次参考レート
+저장한 금액은 이후 환율이 바뀌어도 유지됩니다.|保存した金額は、その後のレート変更でも変わりません。
+최신 제공 환율을 조회하고 있습니다…|最新の提供レートを取得しています…
+환율 조회 실패. 다시 조회하거나 1엔당 원화 환율을 직접 입력하세요. 기존 환율이 있으면 그대로 유지됩니다.|レート取得に失敗しました。再取得するか、1円あたりのウォンレートを入力してください。既存レートは維持されます。
+실제 결제액 적용|実際の決済額を適用
+직접 입력|手入力
+저장했습니다.|保存しました。
+초대코드를 복사했습니다.|招待コードをコピーしました。
+납부를 기록했습니다.|支払を記録しました。
+회원가입을 요청했습니다. 이메일 인증 후 로그인해 주세요.|登録をリクエストしました。メール認証後にログインしてください。
+처리하지 못했습니다:|処理できませんでした：
+동기화 실패:|同期に失敗しました：
+연결 후 다시 시도합니다.|接続後に再試行します。
+금액은 숫자로 입력해 주세요.|金額は数字で入力してください。
+금액은 0 이상의 숫자로 입력해 주세요.|金額は0以上の数値で入力してください。
+카테고리를 1~100자로 입력해 주세요.|カテゴリを1〜100文字で入力してください。
+이름을 입력해 주세요.|名前を入力してください。
+목표 이름을 입력해 주세요.|目標名を入力してください。
+목표 금액은 0보다 커야 합니다.|目標金額は0より大きくしてください。
+납부일은 1~31일입니다.|支払日は1〜31日です。
+환율을 조회하거나 0보다 큰 환율을 입력해 주세요.|レートを取得するか、0より大きいレートを入力してください。
+기록을 찾을 수 없거나 수정 권한이 없습니다. 새로고침해 주세요.|記録が見つからないか、編集権限がありません。更新してください。
+이 거래를 휴지통으로 옮길까요?|この取引をゴミ箱に移しますか？
+이 예산을 삭제할까요?|この予算を削除しますか？
+이 자산·부채 기록을 삭제할까요?|この資産・負債の記録を削除しますか？
+목표를 보관할까요? 연결 거래는 유지됩니다.|目標を保管しますか？リンクした取引は維持されます。
+이 고정비를 중지할까요? 이전 납부 기록은 남습니다.|この固定費を停止しますか？過去の支払記録は残ります。
+납부를 지출로 기록할까요?|支払を支出として記録しますか？
+처리할 휴지통 거래가 없습니다.|処理するゴミ箱の取引はありません。
+건을 완전히 삭제할까요?|件を完全削除しますか？
+삭제한 거래는 복구할 수 없고 배우자의 가계부에서도 사라집니다.|削除した取引は復元できず、パートナーの家計簿からも消えます。
+고정비의 납부 연결도 삭제되어 다시 납부 기록을 할 수 있습니다.|固定費の支払リンクも削除され、再度支払を記録できるようになります。
+건을 모두 복구할까요?|件をすべて復元しますか？
+복구한 거래는 부부의 거래내역과 월별 합계에 다시 반영됩니다.|復元した取引は、ふたりの取引履歴と月別合計に再び反映されます。
+했습니다. 다른 기기에서 이미 처리한 거래는 제외됩니다.|しました。他の端末で処理済みの取引は除外されます。
+로그인이 필요합니다.|ログインが必要です。
+이 가계부에 접근할 수 없습니다.|この家計簿にはアクセスできません。
+고정비를 찾을 수 없습니다.|固定費が見つかりません。
+중지한 고정비입니다.|停止中の固定費です。
+동기화|同期
+` .trim().split('\n').map(line=>line.split('|')));
+  const translationKeys=Object.keys(JA).sort((a,b)=>b.length-a.length);
+  const translationPattern=new RegExp(translationKeys.map(k=>k.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join('|'),'g');
+  function translateText(text) {
+    if(appearance.language!=='ja')return text;
+    return String(text).replace(translationPattern,key=>JA[key])
+      .replace(/(\d[\d,.]*)원/g,'$1ウォン').replace(/(\d+)건/g,'$1件').replace(/(\d+)개월/g,'$1か月')
+      .replace(/이번 달 포함/g,'今月を含む').replace(/씩/g,'ずつ').replace(/% 달성/g,'% 達成').replace(/매월 /g,'毎月 ').replace(/(\d+)일/g,'$1日');
+  }
+  const confirm=message=>window.confirm(translateText(message));
+  const prompt=message=>window.prompt(translateText(message));
+  function userText(value){return `<span data-user-text>${esc(value)}</span>`;}
+  const translatedNodes=new WeakMap(),translatedAttributes=new WeakMap();
+  function localizeUI() {
+    document.documentElement.lang=appearance.language;
+    const walker=document.createTreeWalker(root,NodeFilter.SHOW_TEXT);
+    let node;
+    while(node=walker.nextNode()) {
+      if(node.parentElement?.closest('[data-user-text],.languages,script,style,textarea'))continue;
+      // Option values and all user-provided names are never changed.
+      const option=node.parentElement?.closest('option');
+      if(option && ['category_name','saving_goal_id'].includes(option.parentElement.name) && option.value && option.value!=='__new_category__')continue;
+      const previous=translatedNodes.get(node);
+      const original=previous&&node.nodeValue===previous.output?previous.original:node.nodeValue;
+      const output=translateText(original);translatedNodes.set(node,{original,output});if(node.nodeValue!==output)node.nodeValue=output;
+    }
+    for(const element of root.querySelectorAll('[placeholder],[title],[aria-label]')) {
+      if(element.closest('[data-user-text]'))continue;
+      let entries=translatedAttributes.get(element)||{};
+      for(const key of ['placeholder','title','aria-label'])if(element.hasAttribute(key)){const value=element.getAttribute(key),old=entries[key];const original=old&&value===old.output?old.original:value;const output=translateText(original);entries[key]={original,output};if(value!==output)element.setAttribute(key,output);}
+      translatedAttributes.set(element,entries);
+    }
+    for(const b of root.querySelectorAll('[data-action="language"]'))b.setAttribute('aria-pressed',String(b.dataset.id===appearance.language));
+  }
+  function observeLanguage() {
+    let queued=false; const observer=new MutationObserver(()=>{if(queued)return;queued=true;queueMicrotask(()=>{queued=false;observer.disconnect();localizeUI();observer.observe(root,{childList:true,subtree:true,characterData:true});});});
+    observer.observe(root,{childList:true,subtree:true,characterData:true});localizeUI();
+  }
+
   async function start() {
     document.documentElement.lang='ko';
     root=document.createElement('main'); root.id='ourhome-v11'; document.body.replaceChildren(root);
     const style=document.createElement('style'); style.textContent=`body{margin:0;background:#f3f6f5;color:#18342e;font-family:system-ui,sans-serif}#ourhome-v11{max-width:1000px;margin:auto;padding:24px 18px 60px}#ourhome-v11 *{box-sizing:border-box}#ourhome-v11 header,.toolbar,.row{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}#ourhome-v11 h1{font-size:26px;margin:8px 0}#ourhome-v11 h2{font-size:21px}#ourhome-v11 h3{margin:9px 0}#ourhome-v11 small{color:#536c64}#ourhome-v11 .card{background:white;padding:22px;border:1px solid #dce6df;border-radius:18px;margin:14px 0}#ourhome-v11 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}#ourhome-v11 button{background:#176950;color:white;border:0;border-radius:10px;padding:12px 16px;margin:4px;cursor:pointer;font:inherit}#ourhome-v11 button[aria-current=page]{background:#133d30;outline:3px solid #b8dacb}#ourhome-v11 label{display:block;margin:12px 0}#ourhome-v11 input,#ourhome-v11 select{display:block;width:100%;font:inherit;padding:12px;border:1px solid #bccfc5;border-radius:9px;margin-top:6px;background:white;color:#18342e}#ourhome-v11 nav{display:flex;gap:4px;flex-wrap:wrap;margin:18px 0}#ourhome-v11 progress{width:100%;accent-color:#176950}#ourhome-v11 dialog{border:0;border-radius:18px;padding:24px;width:min(94vw,520px);max-height:90vh;overflow:auto}#ourhome-v11 dialog::backdrop{background:#16392e88}#ourhome-v11 .auth{max-width:440px;margin:40px auto}#notice{white-space:pre-wrap;color:#8a3a16}#ourhome-v11 p{overflow-wrap:anywhere}#ourhome-v11 [aria-busy=true]{opacity:.7}`; document.head.append(style); const theme=document.createElement('style'); theme.textContent=THEME; document.head.append(theme);
+    applyAppearance();observeLanguage();
     draw('<p>연결 중입니다…</p>');
     db=typeof supabaseClient!=='undefined'?supabaseClient:window.supabaseClient;
     if(!db?.auth) { notice('Supabase 연결 설정이 없습니다. index.html에서 Supabase JS v2, supabase-config.js, app.js 순서로 로드해 주세요.'); return; }
@@ -376,6 +686,9 @@
     root.addEventListener('input', e=>{ if(e.target.id==='search') { searchText=e.target.value; renderSearchResults(); } });
     root.addEventListener('change', e=>{ if(e.target.id==='filter-type') { filterType=e.target.value; renderSearchResults(); } if(e.target.id==='filter-owner') { filterOwner=e.target.value; renderSearchResults(); } });
     root.addEventListener('input',moneyInput);
+    root.addEventListener('input',e=>{if(['theme-background','theme-button'].includes(e.target.id)&&validColor(e.target.value)){appearance[e.target.id==='theme-background'?'background':'button']=e.target.value;appearance.preset='custom';applyAppearance();for(const b of root.querySelectorAll('.theme-options button'))b.setAttribute('aria-pressed','false');}});
+    root.addEventListener('change',e=>{if(['theme-background','theme-button'].includes(e.target.id))saveAppearance();});
+
     root.addEventListener('change', e=>{ const form=e.target.closest('form[data-form="transaction"]');if(!form)return;if(e.target.name==='original_currency')toggleFx(form);if(e.target.name==='fx_mode'){toggleFx(form,false);calculateFx(form);} });
     root.addEventListener('change',changeCategory);
     root.addEventListener('submit',e=>{ e.preventDefault(); run(()=>submit(e.target,e.submitter?.value)); });
