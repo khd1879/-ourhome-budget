@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#111827" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="우리집 재무" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="icon-192.png" />
+  <link rel="stylesheet" href="styles.css" />
+  <title>우리집 재무관리 v1.0</title>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div>
+        <div class="eyebrow">HOUSEHOLD FINANCE</div>
+        <h1>우리집 재무관리</h1>
+      </div>
+      <div class="version-badge">v1.0</div>
+    </header>
+
+    <main id="view"></main>
+
+    <nav class="bottom-nav" aria-label="주 메뉴">
+      <button data-tab="home" class="nav-btn active"><span>⌂</span><small>홈</small></button>
+      <button data-tab="ledger" class="nav-btn"><span>≡</span><small>가계부</small></button>
+      <button data-tab="budget" class="nav-btn"><span>◎</span><small>예산</small></button>
+      <button data-tab="assets" class="nav-btn"><span>₩</span><small>자산</small></button>
+      <button data-tab="settings" class="nav-btn"><span>⚙</span><small>설정</small></button>
+    </nav>
+  </div>
+
+  <dialog id="txnDialog">
+    <form method="dialog" id="txnForm" class="dialog-card">
+      <div class="dialog-head">
+        <h2>거래 입력</h2>
+        <button value="cancel" class="icon-btn" aria-label="닫기">✕</button>
+      </div>
+      <input type="hidden" id="txnId" />
+      <label>날짜<input id="txnDate" type="date" required /></label>
+      <label>구분
+        <select id="txnType" required>
+          <option value="expense">지출</option>
+          <option value="income">수입</option>
+          <option value="investment">저축·투자</option>
+        </select>
+      </label>
+      <label>금액<input id="txnAmount" type="number" min="0" step="100" inputmode="numeric" placeholder="0" required /></label>
+      <label>카테고리<select id="txnCategory"></select></label>
+      <label>지출/수입 주체
+        <select id="txnOwner">
+          <option value="공동">공동</option>
+          <option value="남편">남편</option>
+          <option value="아내">아내</option>
+        </select>
+      </label>
+      <label>결제수단<input id="txnPayment" type="text" placeholder="예: 삼성카드, 현금, CMA" /></label>
+      <label>메모<input id="txnMemo" type="text" placeholder="예: 이마트 장보기" /></label>
+      <button id="saveTxn" value="default" class="primary-btn">저장</button>
+    </form>
+  </dialog>
+
+  <dialog id="assetDialog">
+    <form method="dialog" id="assetForm" class="dialog-card">
+      <div class="dialog-head">
+        <h2>자산/부채 입력</h2>
+        <button value="cancel" class="icon-btn" aria-label="닫기">✕</button>
+      </div>
+      <input type="hidden" id="assetId" />
+      <label>구분
+        <select id="assetKind">
+          <option value="asset">자산</option>
+          <option value="liability">부채</option>
+        </select>
+      </label>
+      <label>이름<input id="assetName" type="text" placeholder="예: CMA, ISA, 생활안정자금" required /></label>
+      <label>금액<input id="assetAmount" type="number" min="0" step="1000" inputmode="numeric" required /></label>
+      <label>분류<input id="assetCategory" type="text" placeholder="예: 현금성, 투자, 회사대출" /></label>
+      <button value="default" class="primary-btn">저장</button>
+    </form>
+  </dialog>
+
+  <input id="restoreInput" type="file" accept="application/json" hidden />
+  <script src="app.js"></script>
+</body>
+</html>
