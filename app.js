@@ -700,3 +700,6 @@ Frankfurter 일별 참고환율|Frankfurterの日次参考レート
   }
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',start,{once:true}); else start();
 })();
+
+
+
