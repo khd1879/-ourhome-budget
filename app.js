@@ -1,332 +1,186 @@
-const APP_VERSION="1.0.0";
-const DB_VERSION=1;
-const KEY="ourhome-budget-v1";
-
-const defaultData = {
-  meta:{appVersion:APP_VERSION,dbVersion:DB_VERSION,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()},
-  settings:{
-    householdName:"우리집",
-    members:["남편","아내"],
-    annualSavingGoal:30000000,
-    monthlyInvestmentGoal:1500000,
-    currency:"KRW"
-  },
-  categories:{
-    expense:["식비","생활비","교통","주거","통신","보험","의료","여가","여행","용돈","가족행사","기타"],
-    income:["급여","상여","부수입","환급","기타"],
-    investment:["ISA","CMA","적금","연금","국내주식","해외주식","기타"]
-  },
-  transactions:[],
-  budgets:[
-    {id:crypto.randomUUID(),category:"식비",monthlyLimit:600000},
-    {id:crypto.randomUUID(),category:"생활비",monthlyLimit:300000},
-    {id:crypto.randomUUID(),category:"교통",monthlyLimit:200000},
-    {id:crypto.randomUUID(),category:"여가",monthlyLimit:200000}
-  ],
-  accounts:[],
-  trash:[],
-  audit:[]
-};
-
-let db = loadDB();
-let state = {tab:"home", month:new Date().toISOString().slice(0,7)};
-
-function clone(x){return JSON.parse(JSON.stringify(x))}
-function loadDB(){
-  try{
-    const raw=localStorage.getItem(KEY);
-    if(!raw) return clone(defaultData);
-    const parsed=JSON.parse(raw);
-    return {...clone(defaultData),...parsed,settings:{...defaultData.settings,...parsed.settings},categories:{...defaultData.categories,...parsed.categories}};
-  }catch(e){return clone(defaultData)}
-}
-function saveDB(action="save"){
-  db.meta.updatedAt=new Date().toISOString();
-  db.meta.appVersion=APP_VERSION; db.meta.dbVersion=DB_VERSION;
-  localStorage.setItem(KEY,JSON.stringify(db));
-}
-function won(n){return new Intl.NumberFormat("ko-KR").format(Math.round(Number(n)||0))+"원"}
-function esc(s=""){return String(s).replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[m]))}
-function uid(){return crypto.randomUUID()}
-function monthTxns(month=state.month){return db.transactions.filter(t=>t.date?.slice(0,7)===month)}
-function ytdTxns(year=state.month.slice(0,4)){return db.transactions.filter(t=>t.date?.slice(0,4)===year)}
-function sum(list,type){return list.filter(x=>x.type===type).reduce((a,b)=>a+Number(b.amount||0),0)}
-function currentMonthLabel(){
-  const [y,m]=state.month.split("-");
-  return `${y}년 ${Number(m)}월`;
-}
-function typeLabel(t){return ({expense:"지출",income:"수입",investment:"저축·투자"})[t]||t}
-function audit(action,payload){db.audit.unshift({id:uid(),at:new Date().toISOString(),action,payload});db.audit=db.audit.slice(0,500)}
-
-function setTab(tab){
-  state.tab=tab;
-  document.querySelectorAll(".nav-btn").forEach(b=>b.classList.toggle("active",b.dataset.tab===tab));
-  render();
-}
-document.querySelectorAll(".nav-btn").forEach(b=>b.addEventListener("click",()=>setTab(b.dataset.tab)));
-
-function shiftMonth(delta){
-  let [y,m]=state.month.split("-").map(Number); m+=delta;
-  if(m<1){m=12;y--} if(m>12){m=1;y++}
-  state.month=`${y}-${String(m).padStart(2,"0")}`; render();
-}
-
-function homeView(){
-  const tx=monthTxns(), income=sum(tx,"income"), expense=sum(tx,"expense"), invest=sum(tx,"investment");
-  const remain=income-expense-invest;
-  const ytd=ytdTxns(), yInvest=sum(ytd,"investment");
-  const goal=Number(db.settings.annualSavingGoal||0);
-  const pct=goal?Math.min(100,(yInvest/goal)*100):0;
-  const assets=db.accounts.filter(a=>a.kind==="asset").reduce((s,a)=>s+Number(a.amount),0);
-  const liabilities=db.accounts.filter(a=>a.kind==="liability").reduce((s,a)=>s+Number(a.amount),0);
-  const recent=[...tx].sort((a,b)=>b.date.localeCompare(a.date)||b.createdAt.localeCompare(a.createdAt)).slice(0,6);
-  return `
-    <div class="month-nav">
-      <button onclick="shiftMonth(-1)">‹</button><strong>${currentMonthLabel()}</strong><button onclick="shiftMonth(1)">›</button>
-    </div>
-    <section class="card hero">
-      <div class="muted">현재 순자산</div>
-      <div class="big">${won(assets-liabilities)}</div>
-      <div class="muted">자산 ${won(assets)} · 부채 ${won(liabilities)}</div>
-      <div class="progress-wrap">
-        <div class="progress-meta"><span>${state.month.slice(0,4)}년 저축·투자 목표</span><span>${pct.toFixed(1)}%</span></div>
-        <div class="progress"><div style="width:${pct}%"></div></div>
-        <div class="progress-meta"><span>${won(yInvest)}</span><span>${won(goal)}</span></div>
-      </div>
-    </section>
-    <div class="section-title"><h2>이번 달</h2><p>공동 가계 요약</p></div>
-    <section class="grid grid-2">
-      <div class="card metric"><div class="label">수입</div><div class="value good">${won(income)}</div></div>
-      <div class="card metric"><div class="label">생활지출</div><div class="value bad">${won(expense)}</div></div>
-      <div class="card metric"><div class="label">저축·투자</div><div class="value">${won(invest)}</div><div class="sub">월 목표 ${won(db.settings.monthlyInvestmentGoal)}</div></div>
-      <div class="card metric"><div class="label">잔여현금</div><div class="value ${remain<0?"bad":""}">${won(remain)}</div></div>
-    </section>
-    <div class="section-title"><h2>최근 거래</h2><p>${recent.length}건</p></div>
-    <section class="card">
-      ${recent.length?recent.map(txnRow).join(""):`<div class="empty">아직 거래가 없습니다.<br>오른쪽 아래 + 버튼으로 첫 거래를 입력하세요.</div>`}
-    </section>
-    <button class="fab" onclick="openTxn()">＋</button>
-  `;
-}
-
-function txnRow(t){
-  const sign=t.type==="income"?"+":"−";
-  return `<div class="row">
-    <div class="row-main" onclick="editTxn('${t.id}')">
-      <div class="row-title">${esc(t.category)} <span class="chip">${esc(t.owner||"공동")}</span></div>
-      <div class="row-sub">${esc(t.date)} · ${esc(t.payment||"결제수단 미입력")}${t.memo?` · ${esc(t.memo)}`:""}</div>
-    </div>
-    <div class="row-amount ${t.type}">${sign}${won(t.amount)}</div>
-  </div>`;
-}
-
-function ledgerView(){
-  const list=[...monthTxns()].sort((a,b)=>b.date.localeCompare(a.date)||b.createdAt.localeCompare(a.createdAt));
-  return `
-    <div class="month-nav">
-      <button onclick="shiftMonth(-1)">‹</button><strong>${currentMonthLabel()} 거래내역</strong><button onclick="shiftMonth(1)">›</button>
-    </div>
-    <section class="card">
-      ${list.length?list.map(t=>`<div class="row">
-        <div class="row-main">
-          <div class="row-title" onclick="editTxn('${t.id}')">${esc(t.category)} <span class="chip">${typeLabel(t.type)}</span></div>
-          <div class="row-sub">${esc(t.date)} · ${esc(t.owner||"공동")} · ${esc(t.payment||"미입력")}${t.memo?` · ${esc(t.memo)}`:""}</div>
-        </div>
-        <div style="display:flex;align-items:center;gap:8px">
-          <div class="row-amount ${t.type}">${t.type==="income"?"+":"−"}${won(t.amount)}</div>
-          <button class="icon-btn" onclick="softDeleteTxn('${t.id}')">🗑</button>
-        </div>
-      </div>`).join(""):`<div class="empty">이 달의 거래가 없습니다.</div>`}
-    </section>
-    <button class="fab" onclick="openTxn()">＋</button>
-  `;
-}
-
-function budgetView(){
-  const tx=monthTxns().filter(t=>t.type==="expense");
-  const rows=db.budgets.map(b=>{
-    const used=tx.filter(t=>t.category===b.category).reduce((s,t)=>s+Number(t.amount),0);
-    const p=b.monthlyLimit?Math.min(100,used/b.monthlyLimit*100):0;
-    return `<div class="row">
-      <div class="row-main" style="flex:1">
-        <div class="row-title">${esc(b.category)}</div>
-        <div class="row-sub">${won(used)} / ${won(b.monthlyLimit)}</div>
-        <div class="progress" style="margin-top:7px;background:#e5e7eb"><div style="width:${p}%;background:#111827"></div></div>
-      </div>
-      <button class="secondary-btn" onclick="editBudget('${b.id}')">수정</button>
-    </div>`;
-  });
-  return `
-    <div class="section-title"><h2>${currentMonthLabel()} 예산</h2><p>카테고리별</p></div>
-    <section class="card">${rows.length?rows.join(""):`<div class="empty">예산이 없습니다.</div>`}</section>
-    <div class="btn-row" style="margin-top:10px"><button class="primary-btn" onclick="addBudget()">예산 추가</button></div>
-  `;
-}
-
-function assetsView(){
-  const assets=db.accounts.filter(a=>a.kind==="asset"), debts=db.accounts.filter(a=>a.kind==="liability");
-  const sa=assets.reduce((s,a)=>s+Number(a.amount),0), sd=debts.reduce((s,a)=>s+Number(a.amount),0);
-  const list=(arr,kind)=>arr.length?arr.map(a=>`<div class="row">
-    <div class="row-main" onclick="editAccount('${a.id}')"><div class="row-title">${esc(a.name)}</div><div class="row-sub">${esc(a.category||"미분류")}</div></div>
-    <div style="display:flex;align-items:center;gap:6px"><div class="row-amount ${kind==="liability"?"expense":""}">${won(a.amount)}</div><button class="icon-btn" onclick="deleteAccount('${a.id}')">🗑</button></div>
-  </div>`).join(""):`<div class="empty">등록된 항목이 없습니다.</div>`;
-  return `
-    <section class="grid grid-3">
-      <div class="card metric"><div class="label">총자산</div><div class="value">${won(sa)}</div></div>
-      <div class="card metric"><div class="label">총부채</div><div class="value bad">${won(sd)}</div></div>
-      <div class="card metric"><div class="label">순자산</div><div class="value good">${won(sa-sd)}</div></div>
-    </section>
-    <div class="section-title"><h2>자산</h2></div><section class="card">${list(assets,"asset")}</section>
-    <div class="section-title"><h2>부채</h2></div><section class="card">${list(debts,"liability")}</section>
-    <div class="btn-row" style="margin-top:10px"><button class="primary-btn" onclick="openAccount()">자산/부채 추가</button></div>
-  `;
-}
-
-function settingsView(){
-  return `
-    <div class="section-title"><h2>가구 설정</h2><p>v${APP_VERSION} · DB ${DB_VERSION}</p></div>
-    <section class="card">
-      <label>가구 이름<input id="householdName" value="${esc(db.settings.householdName)}" /></label><br>
-      <label>연간 저축·투자 목표<input id="annualGoal" type="number" value="${Number(db.settings.annualSavingGoal)}" /></label><br>
-      <label>월 저축·투자 목표<input id="monthlyGoal" type="number" value="${Number(db.settings.monthlyInvestmentGoal)}" /></label><br>
-      <button class="primary-btn" onclick="saveSettings()">설정 저장</button>
-    </section>
-    <div class="section-title"><h2>백업 및 복구</h2><p>데이터 보호</p></div>
-    <section class="card">
-      <div class="notice">JSON은 앱 전체 복구용, CSV는 거래내역 확인용입니다. 서버 공동작업 기능을 붙이기 전까지 데이터는 이 기기의 브라우저에 저장됩니다.</div>
-      <div class="btn-row" style="margin-top:12px">
-        <button class="primary-btn" onclick="exportJSON()">전체 JSON 백업</button>
-        <button class="secondary-btn" onclick="exportCSV()">거래 CSV</button>
-        <button class="secondary-btn" onclick="document.getElementById('restoreInput').click()">JSON 복구</button>
-      </div>
-    </section>
-    <div class="section-title"><h2>휴지통</h2><p>${db.trash.length}건</p></div>
-    <section class="card">
-      ${db.trash.length?db.trash.map(t=>`<div class="row"><div class="row-main"><div class="row-title">${esc(t.category)} · ${won(t.amount)}</div><div class="row-sub">${esc(t.date)} · 삭제됨</div></div><button class="secondary-btn" onclick="restoreTxn('${t.id}')">복구</button></div>`).join(""):`<div class="empty">휴지통이 비어 있습니다.</div>`}
-    </section>
-    <div class="section-title"><h2>변경 이력</h2><p>최근 ${Math.min(db.audit.length,10)}건</p></div>
-    <section class="card">
-      ${db.audit.slice(0,10).map(a=>`<div class="row"><div class="row-main"><div class="row-title">${esc(a.action)}</div><div class="row-sub">${new Date(a.at).toLocaleString("ko-KR")}</div></div></div>`).join("")||`<div class="empty">이력이 없습니다.</div>`}
-    </section>
-  `;
-}
-
-function render(){
-  const views={home:homeView,ledger:ledgerView,budget:budgetView,assets:assetsView,settings:settingsView};
-  document.getElementById("view").innerHTML=views[state.tab]();
-}
-window.shiftMonth=shiftMonth;
-
-const txnDialog=document.getElementById("txnDialog");
-const txnForm=document.getElementById("txnForm");
-function fillCategories(type){
-  const sel=document.getElementById("txnCategory");
-  sel.innerHTML=(db.categories[type]||[]).map(c=>`<option>${esc(c)}</option>`).join("");
-}
-document.getElementById("txnType").addEventListener("change",e=>fillCategories(e.target.value));
-
-function openTxn(){
-  txnForm.reset(); document.getElementById("txnId").value="";
-  document.getElementById("txnDate").value=new Date().toISOString().slice(0,10);
-  document.getElementById("txnType").value="expense";fillCategories("expense");
-  document.getElementById("txnOwner").value="공동";
-  txnDialog.showModal();
-}
-function editTxn(id){
-  const t=db.transactions.find(x=>x.id===id); if(!t)return;
-  document.getElementById("txnId").value=t.id;document.getElementById("txnDate").value=t.date;
-  document.getElementById("txnType").value=t.type;fillCategories(t.type);document.getElementById("txnCategory").value=t.category;
-  document.getElementById("txnAmount").value=t.amount;document.getElementById("txnOwner").value=t.owner||"공동";
-  document.getElementById("txnPayment").value=t.payment||"";document.getElementById("txnMemo").value=t.memo||"";
-  txnDialog.showModal();
-}
-txnForm.addEventListener("submit",e=>{
-  if(e.submitter?.value==="cancel")return;
-  e.preventDefault();
-  const id=document.getElementById("txnId").value||uid();
-  const old=db.transactions.find(x=>x.id===id);
-  const t={id,date:document.getElementById("txnDate").value,type:document.getElementById("txnType").value,
-    amount:Number(document.getElementById("txnAmount").value),category:document.getElementById("txnCategory").value,
-    owner:document.getElementById("txnOwner").value,payment:document.getElementById("txnPayment").value.trim(),
-    memo:document.getElementById("txnMemo").value.trim(),createdAt:old?.createdAt||new Date().toISOString(),updatedAt:new Date().toISOString(),enteredBy:"현재 사용자"};
-  if(old){Object.assign(old,t);audit("거래 수정",{id})}else{db.transactions.push(t);audit("거래 추가",{id})}
-  saveDB();txnDialog.close();render();
-});
-function softDeleteTxn(id){
-  const i=db.transactions.findIndex(x=>x.id===id); if(i<0)return;
-  const [t]=db.transactions.splice(i,1); t.deletedAt=new Date().toISOString(); db.trash.unshift(t); audit("거래 삭제",{id});saveDB();render();
-}
-function restoreTxn(id){
-  const i=db.trash.findIndex(x=>x.id===id);if(i<0)return;
-  const [t]=db.trash.splice(i,1);delete t.deletedAt;db.transactions.push(t);audit("거래 복구",{id});saveDB();render();
-}
-
-function addBudget(){
-  const category=prompt("예산 카테고리 이름"); if(!category)return;
-  const amount=Number(prompt("월 예산 금액(원)")); if(!amount)return;
-  db.budgets.push({id:uid(),category,monthlyLimit:amount});audit("예산 추가",{category,amount});saveDB();render();
-}
-function editBudget(id){
-  const b=db.budgets.find(x=>x.id===id);if(!b)return;
-  const amount=Number(prompt(`${b.category} 월 예산`,b.monthlyLimit)); if(!amount)return;
-  b.monthlyLimit=amount;audit("예산 수정",{id,amount});saveDB();render();
-}
-
-const assetDialog=document.getElementById("assetDialog"), assetForm=document.getElementById("assetForm");
-function openAccount(){
-  assetForm.reset();document.getElementById("assetId").value="";document.getElementById("assetKind").value="asset";assetDialog.showModal();
-}
-function editAccount(id){
-  const a=db.accounts.find(x=>x.id===id);if(!a)return;
-  document.getElementById("assetId").value=a.id;document.getElementById("assetKind").value=a.kind;document.getElementById("assetName").value=a.name;
-  document.getElementById("assetAmount").value=a.amount;document.getElementById("assetCategory").value=a.category||"";assetDialog.showModal();
-}
-assetForm.addEventListener("submit",e=>{
-  if(e.submitter?.value==="cancel")return;e.preventDefault();
-  const id=document.getElementById("assetId").value||uid();
-  const old=db.accounts.find(x=>x.id===id);
-  const a={id,kind:document.getElementById("assetKind").value,name:document.getElementById("assetName").value.trim(),
-    amount:Number(document.getElementById("assetAmount").value),category:document.getElementById("assetCategory").value.trim(),updatedAt:new Date().toISOString()};
-  if(old){Object.assign(old,a);audit("자산/부채 수정",{id})}else{db.accounts.push(a);audit("자산/부채 추가",{id})}
-  saveDB();assetDialog.close();render();
-});
-function deleteAccount(id){db.accounts=db.accounts.filter(x=>x.id!==id);audit("자산/부채 삭제",{id});saveDB();render()}
-
-function saveSettings(){
-  db.settings.householdName=document.getElementById("householdName").value.trim()||"우리집";
-  db.settings.annualSavingGoal=Number(document.getElementById("annualGoal").value)||0;
-  db.settings.monthlyInvestmentGoal=Number(document.getElementById("monthlyGoal").value)||0;
-  audit("설정 변경",{});saveDB();render();
-}
-function download(name,blob){
-  const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),1000)
-}
-function exportJSON(){
-  const stamp=new Date().toISOString().replace(/[:.]/g,"-");
-  download(`ourhome_backup_${APP_VERSION}_${stamp}.json`,new Blob([JSON.stringify(db,null,2)],{type:"application/json"}));
-}
-function csvCell(v){v=String(v??"").replace(/"/g,'""');return `"${v}"`}
-function exportCSV(){
-  const head=["날짜","구분","금액","카테고리","주체","결제수단","메모","입력자"];
-  const rows=db.transactions.map(t=>[t.date,typeLabel(t.type),t.amount,t.category,t.owner,t.payment,t.memo,t.enteredBy]);
-  const csv="\uFEFF"+[head,...rows].map(r=>r.map(csvCell).join(",")).join("\n");
-  download(`ourhome_transactions_${new Date().toISOString().slice(0,10)}.csv`,new Blob([csv],{type:"text/csv;charset=utf-8"}));
-}
-document.getElementById("restoreInput").addEventListener("change",async e=>{
-  const file=e.target.files?.[0];if(!file)return;
-  try{
-    const parsed=JSON.parse(await file.text());
-    if(!parsed.meta || !Array.isArray(parsed.transactions)) throw new Error("형식 오류");
-    if(confirm("현재 데이터를 백업 파일로 덮어쓸까요?")){
-      localStorage.setItem(KEY,JSON.stringify(parsed));db=loadDB();audit("JSON 복구",{});saveDB();render();
+/* 우리집 재무관리 v1.1 — 대화에 남은 DB 스키마를 기준으로 재구성.
+ * index.html: Supabase JS v2 → supabase-config.js → app.js 순서로 로드.
+ * 기존 localStorage는 읽기만 하며 삭제하지 않습니다.
+ */
+(() => {
+  'use strict';
+  const VERSION = '1.1';
+  const labels = {expense:'지출', income:'수입', investment:'저축·투자', asset:'자산', liability:'부채'};
+  const esc = x => String(x ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; };
+  const won = n => `${Number(n || 0).toLocaleString('ko-KR')}원`;
+  const sum = rows => rows.reduce((a,r) => a + Number(r.amount),0);
+  let db, root, user, house, data = {}, tab = 'home', month = today().slice(0,7), busy = false, syncing = false, generation = 0, pendingRefresh = null;
+  const $ = s => root.querySelector(s);
+  const btn = (action,title,id='') => `<button type="button" data-action="${action}" data-id="${esc(id)}">${esc(title)}</button>`;
+  const field = (name,title,value='',type='text',extra='') => `<label>${esc(title)}<input name="${name}" type="${type}" value="${esc(value)}" ${extra}></label>`;
+  const select = (name,title,options,value) => `<label>${esc(title)}<select name="${name}">${options.map(([v,t]) => `<option value="${esc(v)}" ${v===value?'selected':''}>${esc(t)}</option>`).join('')}</select></label>`;
+  const number = v => { if (String(v).trim()==='' || !Number.isFinite(Number(v)) || Number(v)<0) throw Error('금액은 0 이상의 숫자로 입력해 주세요.'); return Number(v); };
+  const checked = async q => { const r = await q; if(r.error) throw r.error; return r.data; };
+  function notice(message) { $('#notice').textContent = message; const d=$('#editor'); if(d?.open) { let p=d.querySelector('[role="status"]'); if(!p) {p=document.createElement('p');p.setAttribute('role','status');d.append(p);} p.textContent=message; } }
+  function draw(content) { root.innerHTML = `<header><div><small>OUR HOME · v${VERSION}</small><h1>부부 공동 가계부</h1></div>${user?btn('logout','로그아웃'):''}</header><p id="notice" role="status" aria-live="polite"></p>${content}<dialog id="editor"></dialog>`; }
+  async function run(fn) { if(busy) return; busy=true; root.setAttribute('aria-busy','true'); try { await fn(); } catch(e) { notice(`처리하지 못했습니다: ${e.message || e}`); } finally { busy=false; root.removeAttribute('aria-busy'); } }
+  async function rows(table,hid) {
+    let result=[];
+    for(let start=0;;) { const page=await checked(db.from(table).select('*').eq('household_id',hid).order('id').range(start,start+499)); result.push(...page); if(!page.length) return result; start+=page.length; }
+  }
+  async function refresh(render=true) {
+    if(pendingRefresh) { try { await pendingRefresh; } catch {} }
+    const promise=fetchState(render); pendingRefresh=promise;
+    try { await promise; } finally { if(pendingRefresh===promise) pendingRefresh=null; }
+  }
+  async function fetchState(render=true) {
+    if(!house || syncing) return;
+    syncing=true; const g=generation, hid=house.id;
+    try {
+      const names=['transactions','budgets','accounts','categories','household_members','audit_logs'];
+      const results=await Promise.all(names.map(n => rows(n,hid)));
+      const h=await checked(db.from('households').select('*').eq('id',hid).single());
+      if(g!==generation) return;
+      data=Object.fromEntries(names.map((n,i)=>[n,results[i]])); house=h;
+      if(render && !$('#editor')?.open && !root.querySelector('form')) dashboard();
+      const status=$('#sync'); if(status) status.textContent=`동기화 ${new Date().toLocaleTimeString('ko-KR')}`;
+    } finally { syncing=false; }
+  }
+  async function loadSession(session) {
+    const g=++generation; user=session?.user; house=null; data={};
+    if(!user) { login(); return; }
+    draw('<p>우리집을 불러오는 중입니다…</p>');
+    const membership=await checked(db.from('household_members').select('*').eq('user_id',user.id).order('created_at').limit(1));
+    if(g!==generation) return;
+    if(!membership.length) { onboarding(); return; }
+    house=await checked(db.from('households').select('*').eq('id',membership[0].household_id).single());
+    if(g!==generation) return;
+    await refresh(false); if(g===generation) dashboard();
+  }
+  function login() { draw(`<section class="card auth"><h2>우리집 기록을 함께</h2><p>각자의 이메일로 로그인하면 같은 가계부를 사용합니다.</p><form data-form="auth">${field('email','이메일','','email','required autocomplete="email"')}${field('password','비밀번호','','password','required minlength="6" autocomplete="current-password"')}<button name="mode" value="login">로그인</button><button name="mode" value="signup">회원가입</button></form></section>`); }
+  function onboarding() { draw(`<section class="card"><h2>처음 오셨나요?</h2><form data-form="create">${field('name','우리집 이름','우리집','text','required maxlength="80"')}<button>우리집 만들기 · 남편/관리자</button></form></section><section class="card"><h2>초대코드로 참여</h2><form data-form="join">${field('code','12자리 초대코드','','text','required minlength="12" maxlength="12" pattern="[A-Za-z0-9]{12}"')}${field('display','이름','아내','text','required maxlength="40"')}<button>참여하기</button></form></section>`); }
+  function dashboard() {
+    const tx=data.transactions||[], active=tx.filter(r=>!r.deleted_at), monthly=active.filter(r=>r.txn_date.startsWith(month));
+    const totals=Object.fromEntries(['income','expense','investment'].map(k=>[k,sum(monthly.filter(r=>r.txn_type===k))]));
+    let body='';
+    if(tab==='home') {
+      const annual=sum(active.filter(r=>r.txn_type==='investment'&&r.txn_date.startsWith(month.slice(0,4))));
+      body=`<div class="grid">${[['수입',totals.income],['지출',totals.expense],['저축·투자',totals.investment],['잔여현금',totals.income-totals.expense-totals.investment]].map(([t,n])=>`<section class="card"><small>${t}</small><h2>${won(n)}</h2></section>`).join('')}</div><section class="card"><h2>연간 저축·투자 목표</h2><p>${won(annual)} / ${won(house.annual_saving_goal)}</p><progress max="${Number(house.annual_saving_goal)||1}" value="${annual}"></progress><p>월 투자 목표 ${won(house.monthly_investment_goal)} · 이번 달 ${won(totals.investment)}</p></section><h2>최근 거래</h2>${transactionList(monthly.slice().sort((a,b)=>b.txn_date.localeCompare(a.txn_date)).slice(0,10))}`;
     }
-  }catch(err){alert("복구할 수 없는 파일입니다.")}
-  e.target.value="";
-});
-
-Object.assign(window,{openTxn,editTxn,softDeleteTxn,restoreTxn,addBudget,editBudget,openAccount,editAccount,deleteAccount,saveSettings,exportJSON,exportCSV});
-
-if("serviceWorker" in navigator){
-  window.addEventListener("load",()=>navigator.serviceWorker.register("./sw.js").catch(()=>{}));
-}
-render();
+    if(tab==='transactions') body=`<h2>거래내역</h2>${transactionList(monthly.slice().sort((a,b)=>b.txn_date.localeCompare(a.txn_date)))}`;
+    if(tab==='trash') body=`<h2>휴지통</h2>${transactionList(tx.filter(r=>r.deleted_at),true)}`;
+    if(tab==='budgets') body=`<h2>카테고리별 월 예산</h2>${btn('budget','예산 추가')}<div class="grid">${data.budgets.filter(r=>r.active).map(r=>{const used=sum(monthly.filter(t=>t.txn_type==='expense'&&t.category_name===r.category_name));return `<section class="card"><h3>${esc(r.category_name)}</h3><p>${won(used)} / ${won(r.monthly_limit)}</p><p>${used>r.monthly_limit?'초과 '+won(used-r.monthly_limit):'남음 '+won(r.monthly_limit-used)}</p>${btn('budget','수정',r.id)}${btn('hide-budget','삭제',r.id)}</section>`;}).join('')}</div>`;
+    if(tab==='accounts') { const assets=sum(data.accounts.filter(r=>r.kind==='asset')), debt=sum(data.accounts.filter(r=>r.kind==='liability')); body=`<section class="card"><h2>순자산 ${won(assets-debt)}</h2><p>자산 ${won(assets)} · 부채 ${won(debt)}</p></section>${btn('account','자산·부채 추가')}<div class="grid">${data.accounts.map(r=>`<section class="card"><small>${labels[r.kind]} · ${esc(r.category)}</small><h3>${esc(r.name)}</h3><p>${won(r.amount)}</p>${btn('account','수정',r.id)}${btn('delete-account','삭제',r.id)}</section>`).join('')}</div>`; }
+    if(tab==='settings') body=`<section class="card"><h2>${esc(house.name)}</h2><p>초대코드 <strong>${esc(house.invite_code)}</strong></p>${btn('copy','초대코드 복사')}<p>${data.household_members.map(m=>`${esc(m.display_name)} (${m.role==='owner'?'관리자':'구성원'})`).join(' · ')}</p>${btn('goals','목표 수정')}</section><section class="card"><h2>백업 및 가져오기</h2>${btn('json','서버 전체 JSON 백업')}${btn('csv','전체 거래 CSV 백업')}${btn('local','v1.0 로컬 데이터 가져오기')}<label>JSON 백업 가져오기<input type="file" id="import-file" accept=".json,application/json"></label><p>가져오기는 기존 기록을 삭제하지 않고 추가합니다. 적용 전 내용을 확인할 수 있습니다.</p></section><section class="card"><h2>카테고리</h2>${btn('category','카테고리 추가')}<p>${data.categories.filter(c=>c.active).map(c=>`${esc(c.name)} (${labels[c.kind]})`).join(' · ')}</p></section><section class="card"><h2>최근 변경이력</h2>${data.audit_logs.slice().sort((a,b)=>Number(b.id)-Number(a.id)).slice(0,50).map(r=>`<p>${esc(new Date(r.created_at).toLocaleString('ko-KR'))} · ${esc(data.household_members.find(m=>m.user_id===r.actor_id)?.display_name||'구성원')} · ${esc(r.entity_type)} ${esc(r.action)}</p>`).join('')||'<p>변경이력이 없습니다.</p>'}</section>`;
+    draw(`<div class="toolbar"><label>조회 월 <input id="month" type="month" value="${month}"></label><span id="sync">약 5초 간격 동기화</span>${btn('refresh','새로고침')}${btn('transaction','+ 거래 입력')}</div><nav>${[['home','요약'],['transactions','거래'],['budgets','예산'],['accounts','자산'],['trash','휴지통'],['settings','설정']].map(([k,t])=>`<button data-action="tab" data-id="${k}" aria-current="${tab===k?'page':'false'}">${t}</button>`).join('')}</nav>${body}`);
+  }
+  function transactionList(list,trash=false) { return list.map(r=>`<article class="card row"><div><small>${esc(r.txn_date)} · ${labels[r.txn_type]} · ${esc(r.owner_label)}</small><h3>${esc(r.category_name)} · ${won(r.amount)}</h3><p>${esc(r.memo)} ${esc(r.payment_method)}</p><small>입력: ${esc(data.household_members.find(m=>m.user_id===r.entered_by)?.display_name||'구성원')}</small></div><div>${trash?btn('restore','복구',r.id):btn('transaction','수정',r.id)+btn('trash','휴지통으로',r.id)}</div></article>`).join('')||'<section class="card">기록이 없습니다.</section>'; }
+  function editor(kind,id) {
+    let r={}, body='';
+    if(kind==='transaction') { r=data.transactions.find(x=>x.id===id)||{}; body=field('txn_date','날짜',r.txn_date||today(),'date','required')+select('txn_type','종류',Object.entries(labels).slice(0,3),r.txn_type||'expense')+field('amount','금액',r.amount??'','number','required min="0" step="0.01"')+field('category_name','카테고리',r.category_name||'식비','text','required list="categories" maxlength="100"')+`<datalist id="categories">${data.categories.filter(c=>c.active).map(c=>`<option value="${esc(c.name)}"></option>`).join('')}</datalist>`+select('owner_label','사용 구분',['공동','남편','아내'].map(x=>[x,x]),r.owner_label||'공동')+field('payment_method','결제수단',r.payment_method)+field('memo','메모',r.memo); }
+    if(kind==='budget') { r=data.budgets.find(x=>x.id===id)||{}; body=field('category_name','카테고리',r.category_name,'text','required')+field('monthly_limit','월 예산',r.monthly_limit??'','number','required min="0" step="0.01"'); }
+    if(kind==='account') { r=data.accounts.find(x=>x.id===id)||{}; body=select('kind','구분',[['asset','자산'],['liability','부채']],r.kind||'asset')+field('name','이름',r.name,'text','required')+field('amount','금액',r.amount??'','number','required min="0" step="0.01"')+field('category','분류',r.category); }
+    if(kind==='goals') body=field('name','우리집 이름',house.name,'text','required')+field('annual_saving_goal','연간 저축·투자 목표',house.annual_saving_goal,'number','required min="0"')+field('monthly_investment_goal','월 투자 목표',house.monthly_investment_goal,'number','required min="0"');
+    if(kind==='category') body=select('kind','종류',Object.entries(labels).slice(0,3),'expense')+field('name','카테고리 이름','','text','required');
+    const d=$('#editor'); d.innerHTML=`<h2>${kind==='goals'?'목표 설정':'기록 입력'}</h2><form data-form="${kind}" data-id="${esc(id||'')}">${body}<button>저장</button>${btn('close','취소')}</form><p>저장 실패 시 상단 안내를 확인해 주세요.</p>`; d.showModal();
+  }
+  async function update(table,id,patch) { const r=await checked(db.from(table).update(patch).eq('id',id).eq('household_id',house.id).select('id')); if(!r.length) throw Error('기록을 찾을 수 없거나 수정 권한이 없습니다. 새로고침해 주세요.'); }
+  function download(name,text,type) { const url=URL.createObjectURL(new Blob([text],{type})); const a=document.createElement('a'); a.href=url; a.download=name; document.body.append(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(url),60000); }
+  async function backup() { await refresh(false); return {format:'ourhome-budget',version:VERSION,exported_at:new Date().toISOString(),household:house,...data}; }
+  function csvCell(v) { let s=String(v??''); if(/^[=+\-@\t\r]/.test(s)) s="'"+s; return '"'+s.replace(/"/g,'""')+'"'; }
+  async function submit(form,mode) {
+    const f=Object.fromEntries(new FormData(form)), kind=form.dataset.form, id=form.dataset.id;
+    if(kind==='auth') { const args={email:f.email.trim(),password:f.password}; if(mode==='signup') { await checked(db.auth.signUp({...args,options:{emailRedirectTo:location.origin+location.pathname}})); notice('회원가입을 요청했습니다. 이메일 인증 후 로그인해 주세요.'); } else { const result=await checked(db.auth.signInWithPassword(args)); await loadSession(result.session); } return; }
+    if(kind==='create') { await checked(db.from('households').insert({name:f.name.trim(),owner_id:user.id})); await loadSession({user}); return; }
+    if(kind==='join') { await checked(db.rpc('join_household_by_code',{p_invite_code:f.code.trim().toUpperCase(),p_display_name:f.display.trim()})); await loadSession({user}); return; }
+    if(kind==='goals') { await checked(db.from('households').update({name:f.name.trim(),annual_saving_goal:number(f.annual_saving_goal),monthly_investment_goal:number(f.monthly_investment_goal)}).eq('id',house.id).select('id').single()); }
+    else {
+      const table={transaction:'transactions',budget:'budgets',account:'accounts',category:'categories'}[kind];
+      if(!table) return;
+      for(const key of ['amount','monthly_limit']) if(key in f) f[key]=number(f[key]);
+      for(const key of ['name','category_name']) if(key in f && !f[key].trim()) throw Error('이름을 입력해 주세요.');
+      if(id) await update(table,id,f);
+      else { f.household_id=house.id; if(kind==='transaction') f.entered_by=user.id; if(kind==='account') f.created_by=user.id; await checked(db.from(table).insert(f)); }
+    }
+    $('#editor').close(); await refresh(false); dashboard(); notice('저장했습니다.');
+  }
+  // v1.0의 알려지지 않은 필드는 임의로 버리지 않고 미리보기에서 차단합니다.
+  function normalizeImport(raw) {
+    const source=raw.data||raw.state||raw;
+    if(!source || typeof source!=='object' || !Array.isArray(source.transactions)) throw Error('transactions 배열이 있는 가계부 JSON이 필요합니다.');
+    const types={'지출':'expense','수입':'income','저축':'investment','투자':'investment','저축·투자':'investment'};
+    const result={transactions:[],accounts:[],budgets:[],categories:[]};
+    for(const [i,r] of source.transactions.entries()) {
+      const date=r.txn_date??r.date, type=types[r.txn_type??r.type]||r.txn_type||r.type, category=r.category_name??r.category;
+      if(!/^\d{4}-\d{2}-\d{2}$/.test(date||'') || !['income','expense','investment'].includes(type) || typeof category!=='string' || !category.trim()) throw Error(`거래 ${i+1}번의 날짜·종류·카테고리 형식을 확인할 수 없습니다.`);
+      const owner=r.owner_label??r.owner??'공동'; if(!['공동','남편','아내'].includes(owner)) throw Error(`거래 ${i+1}번의 사용 구분을 확인해 주세요.`);
+      const deleted=r.deleted_at??r.deletedAt??(r.deleted?new Date().toISOString():null);
+      if(deleted && !Number.isFinite(Date.parse(deleted))) throw Error('삭제일 형식을 확인해 주세요.');
+      result.transactions.push({txn_date:date,txn_type:type,amount:number(r.amount),category_name:category,owner_label:owner,payment_method:r.payment_method??r.paymentMethod??r.payment??'',memo:r.memo??r.note??'',deleted_at:deleted});
+    }
+    if(source.accounts && !Array.isArray(source.accounts)) throw Error('accounts는 배열이어야 합니다.');
+    for(const r of source.accounts||[]) { if(!['asset','liability'].includes(r.kind??r.type)||!r.name) throw Error('자산·부채 형식을 확인해 주세요.'); result.accounts.push({kind:r.kind??r.type,name:r.name,amount:number(r.amount),category:r.category??''}); }
+    if(source.assets||source.liabilities) throw Error('별도 assets/liabilities 형식은 자동 변환하지 않습니다. 원본 JSON에 맞춘 변환이 필요합니다.');
+    const budgets=Array.isArray(source.budgets)?source.budgets:Object.entries(source.budgets||{}).map(([category,amount])=>({category,amount}));
+    for(const r of budgets) { const category=r.category_name??r.category; if(!category) throw Error('예산 카테고리를 확인해 주세요.'); result.budgets.push({category_name:category,monthly_limit:number(r.monthly_limit??r.limit??r.amount),active:r.active!==false}); }
+    if(source.categories && !Array.isArray(source.categories)) throw Error('categories 형식은 별도 변환이 필요합니다.');
+    for(const r of source.categories||[]) { if(!r.name||!['income','expense','investment'].includes(r.kind)) throw Error('카테고리 형식을 확인해 주세요.'); result.categories.push({kind:r.kind,name:r.name,active:r.active!==false,sort_order:Number(r.sort_order)||0}); }
+    return result;
+  }
+  async function importData(raw) {
+    const payload=normalizeImport(raw);
+    const description=Object.entries(payload).map(([k,v])=>`${k}: ${v.length}건`).join('\n');
+    if(!confirm(`다음 기록을 우리집에 추가합니다.\n${description}\n동일한 기록은 건너뜁니다. 목표·구성원·변경이력은 덮어쓰지 않습니다.\n계속할까요?`)) return;
+    await refresh(false);
+    let added=0;
+    // Deterministic fingerprints make repeated imports safe, including retries after partial success.
+    for(const [table,list] of Object.entries(payload)) {
+      const fingerprint=r=>JSON.stringify(Object.keys(list[0]||{}).map(k=>[k,['amount','monthly_limit','sort_order'].includes(k)?Number(r[k]):(r[k]??'')]));
+      const counts=new Map(); for(const r of data[table]) { const key=fingerprint(r); counts.set(key,(counts.get(key)||0)+1); }
+      const seen=new Map();
+      for(const r of list) {
+        const key=fingerprint(r), occurrence=(seen.get(key)||0)+1; seen.set(key,occurrence);
+        if(occurrence<=(counts.get(key)||0)) continue;
+        if(table==='budgets' && data.budgets.some(x=>x.category_name===r.category_name)) continue;
+        if(table==='categories' && data.categories.some(x=>x.kind===r.kind&&x.name===r.name)) continue;
+        const record={...r,household_id:house.id}; if(table==='transactions') record.entered_by=user.id; if(table==='accounts') record.created_by=user.id;
+        try { await checked(db.from(table).insert(record)); added++; } catch(e) { throw Error(`${added}건까지 추가했습니다. 다시 실행하면 동일한 기록은 건너뜁니다. ${e.message}`); }
+      }
+    }
+    await refresh(false); dashboard(); notice(`${added}건을 가져왔습니다. 원본 로컬 데이터는 그대로 보관했습니다.`);
+  }
+  async function localImport() {
+    const candidates=[];
+    for(let i=0;i<localStorage.length;i++) { const key=localStorage.key(i); if(key.startsWith('sb-')) continue; try { const raw=JSON.parse(localStorage.getItem(key)); if(Array.isArray((raw?.data||raw?.state||raw)?.transactions)) candidates.push({key,raw}); } catch {} }
+    if(!candidates.length) throw Error('이 주소의 브라우저에서 v1.0 데이터를 찾지 못했습니다. 기존 기기에서 JSON 백업 후 가져와 주세요.');
+    const choice=candidates.length===1?0:Number(prompt(candidates.map((r,i)=>`${i+1}. ${r.key}`).join('\n')+'\n가져올 번호를 입력하세요.'))-1;
+    if(!candidates[choice]) return; await importData(candidates[choice].raw);
+  }
+  async function action(name,id) {
+    if(name==='close') { $('#editor').close(); return; }
+    if(name==='logout') { await checked(db.auth.signOut()); await loadSession(null); return; }
+    if(name==='tab') { tab=id; dashboard(); return; }
+    if(['transaction','budget','account','goals','category'].includes(name)) { editor(name,id); return; }
+    if(name==='refresh') { await refresh(false); dashboard(); }
+    if(name==='copy') { await navigator.clipboard.writeText(house.invite_code); notice('초대코드를 복사했습니다.'); }
+    if(name==='trash' && confirm('이 거래를 휴지통으로 옮길까요?')) { await update('transactions',id,{deleted_at:new Date().toISOString()}); await refresh(false); dashboard(); }
+    if(name==='restore') { await update('transactions',id,{deleted_at:null}); await refresh(false); dashboard(); }
+    if(name==='hide-budget' && confirm('이 예산을 삭제할까요?')) { await update('budgets',id,{active:false}); await refresh(false); dashboard(); }
+    if(name==='delete-account' && confirm('이 자산·부채 기록을 삭제할까요?')) { await checked(db.from('accounts').delete().eq('id',id).eq('household_id',house.id)); await refresh(false); dashboard(); }
+    if(name==='json') download(`ourhome-v1.1-${today()}.json`,JSON.stringify(await backup(),null,2),'application/json');
+    if(name==='csv') { await refresh(false); const columns=['txn_date','txn_type','amount','category_name','owner_label','payment_method','memo','entered_by','deleted_at']; download(`ourhome-${today()}.csv`,'\uFEFF'+[columns,...data.transactions.map(r=>columns.map(k=>r[k]))].map(r=>r.map(csvCell).join(',')).join('\r\n'),'text/csv;charset=utf-8'); }
+    if(name==='local') await localImport();
+  }
+  async function start() {
+    document.documentElement.lang='ko';
+    root=document.createElement('main'); root.id='ourhome-v11'; document.body.replaceChildren(root);
+    const style=document.createElement('style'); style.textContent=`body{margin:0;background:#f3f6f5;color:#18342e;font-family:system-ui,sans-serif}#ourhome-v11{max-width:1000px;margin:auto;padding:24px 18px 60px}#ourhome-v11 *{box-sizing:border-box}#ourhome-v11 header,.toolbar,.row{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}#ourhome-v11 h1{font-size:26px;margin:8px 0}#ourhome-v11 h2{font-size:21px}#ourhome-v11 h3{margin:9px 0}#ourhome-v11 small{color:#536c64}#ourhome-v11 .card{background:white;padding:22px;border:1px solid #dce6df;border-radius:18px;margin:14px 0}#ourhome-v11 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}#ourhome-v11 button{background:#176950;color:white;border:0;border-radius:10px;padding:12px 16px;margin:4px;cursor:pointer;font:inherit}#ourhome-v11 button[aria-current=page]{background:#133d30;outline:3px solid #b8dacb}#ourhome-v11 label{display:block;margin:12px 0}#ourhome-v11 input,#ourhome-v11 select{display:block;width:100%;font:inherit;padding:12px;border:1px solid #bccfc5;border-radius:9px;margin-top:6px;background:white;color:#18342e}#ourhome-v11 nav{display:flex;gap:4px;flex-wrap:wrap;margin:18px 0}#ourhome-v11 progress{width:100%;accent-color:#176950}#ourhome-v11 dialog{border:0;border-radius:18px;padding:24px;width:min(94vw,520px);max-height:90vh;overflow:auto}#ourhome-v11 dialog::backdrop{background:#16392e88}#ourhome-v11 .auth{max-width:440px;margin:40px auto}#notice{white-space:pre-wrap;color:#8a3a16}#ourhome-v11 p{overflow-wrap:anywhere}#ourhome-v11 [aria-busy=true]{opacity:.7}`; document.head.append(style);
+    draw('<p>연결 중입니다…</p>');
+    db=typeof supabaseClient!=='undefined'?supabaseClient:window.supabaseClient;
+    if(!db?.auth) { notice('Supabase 연결 설정이 없습니다. index.html에서 Supabase JS v2, supabase-config.js, app.js 순서로 로드해 주세요.'); return; }
+    root.addEventListener('click',e=>{ const b=e.target.closest('[data-action]'); if(b) run(()=>action(b.dataset.action,b.dataset.id)); });
+    root.addEventListener('submit',e=>{ e.preventDefault(); run(()=>submit(e.target,e.submitter?.value)); });
+    root.addEventListener('change',e=>{ if(e.target.id==='month' && /^\d{4}-\d{2}$/.test(e.target.value)) {month=e.target.value;dashboard();} if(e.target.id==='import-file'&&e.target.files[0]) {const file=e.target.files[0]; run(async()=>importData(JSON.parse(await file.text())));e.target.value='';} });
+    db.auth.onAuthStateChange((event,session)=>{ if(event==='SIGNED_OUT') { generation++; user=null;house=null;data={};login(); } else if(event==='SIGNED_IN' && session?.user.id!==user?.id) setTimeout(()=>run(()=>loadSession(session)),0); });
+    await run(async()=>{ const s=await checked(db.auth.getSession()); await loadSession(s.session); });
+    setInterval(()=>{if(house&&!busy&&!document.hidden) refresh().catch(e=>notice(`동기화 실패: ${e.message}. 연결 후 다시 시도합니다.`));},5000);
+    if('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js',{updateViaCache:'none'}).then(r=>r.update()).catch(()=>{});
+  }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',start,{once:true}); else start();
+})();
