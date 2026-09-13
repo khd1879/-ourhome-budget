@@ -1,6 +1,6 @@
-/* 우리집 재무관리 v1.1: 앱 파일은 네트워크 우선, API/인증 응답은 캐시하지 않음. */
+/* 우리집 재무관리 v2.0: 앱 파일은 네트워크 우선, API/인증 응답은 캐시하지 않음. */
 'use strict';
-const CACHE = 'ourhome-v1.1-shell-20260913';
+const CACHE = 'ourhome-v2.0-shell-20260913-trash1';
 const BASE = new URL('./', self.location.href);
 const FILES = ['./','index.html','app.js','styles.css','supabase-config.js','manifest.webmanifest','icon-192.png','icon-512.png'];
 const URLS = FILES.map(p => new URL(p, BASE).href);
