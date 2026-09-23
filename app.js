@@ -4,7 +4,7 @@
  */
 (() => {
   'use strict';
-  const VERSION = '2.3.0';
+  const VERSION = '2.4.0';
   const labels = {expense:'지출', income:'수입', investment:'저축·투자', asset:'자산', liability:'부채'};
   const esc = x => String(x ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; };
@@ -36,7 +36,7 @@
     if(!house || syncing) return;
     syncing=true; const g=generation, hid=house.id;
     try {
-      const names=['transactions','budgets','accounts','categories','household_members','audit_logs','recurring_expenses','recurring_payments','saving_goals','goal_allocations','asset_snapshots'];
+      const names=['transactions','budgets','accounts','categories','household_members','audit_logs','recurring_expenses','recurring_payments','saving_goals','goal_allocations','asset_snapshots','portfolio_targets'];
       const results=await Promise.all(names.map(n => rows(n,hid)));
       const h=await checked(db.from('households').select('*').eq('id',hid).single());
       if(g!==generation) return;
@@ -71,6 +71,7 @@
     if(tab==='trash') { const trashed=tx.filter(r=>r.deleted_at); body=`<div class="trash-heading"><div><h2>휴지통</h2><p>${trashed.length}건 · 완전삭제한 거래는 복구할 수 없습니다.</p></div><div class="trash-tools">${trashed.length?btn('trash-restore-all','전체복구')+btn('trash-delete-all','전체삭제'):''}</div></div>${transactionList(trashed,true)}`; }
     if(tab==='budgets') body=`<h2>카테고리별 월 예산</h2>${btn('budget','예산 추가')}<div class="grid">${data.budgets.filter(r=>r.active).map(r=>{const used=sum(monthly.filter(t=>t.txn_type==='expense'&&t.category_name===r.category_name));return `<section class="card"><h3>${userText(r.category_name)}</h3><p>${won(used)} / ${won(r.monthly_limit)}</p><p>${used>r.monthly_limit?'초과 '+won(used-r.monthly_limit):'남음 '+won(r.monthly_limit-used)}</p>${btn('budget','수정',r.id)}${btn('hide-budget','삭제',r.id)}</section>`;}).join('')}</div>`;
     if(tab==='accounts') body=assetsDashboard();
+    if(tab==='portfolio') body=portfolioView();
     if(tab==='settings') body=`<section class="card"><h2>${userText(house.name)}</h2><p>초대코드 <strong>${esc(house.invite_code)}</strong></p>${btn('copy','초대코드 복사')}<p>${data.household_members.map(m=>`${userText(m.display_name)} (${m.role==='owner'?'관리자':'구성원'})`).join(' · ')}</p>${btn('goals','목표 수정')}</section><section class="card"><h2>백업 및 가져오기</h2>${btn('json','서버 전체 JSON 백업')}${btn('csv','전체 거래 CSV 백업')}${btn('local','v1.0 로컬 데이터 가져오기')}<label>JSON 백업 가져오기<input type="file" id="import-file" accept=".json,application/json"></label><p>가져오기는 거래·예산·자산·카테고리를 추가합니다. 고정비 설정과 납부 연결의 전체 복원은 지원하지 않습니다. 적용 전 내용을 확인할 수 있습니다.</p></section><section class="card"><h2>카테고리</h2>${btn('category','카테고리 추가')}<p>${data.categories.filter(c=>c.active).map(c=>`${userText(c.name)} (${labels[c.kind]})`).join(' · ')}</p></section><section class="card"><h2>최근 변경이력</h2>${data.audit_logs.slice().sort((a,b)=>Number(b.id)-Number(a.id)).slice(0,50).map(r=>`<p>${esc(new Date(r.created_at).toLocaleString('ko-KR'))} · ${userText(data.household_members.find(m=>m.user_id===r.actor_id)?.display_name||'구성원')} · ${esc(r.entity_type)} ${esc(r.action)}</p>`).join('')||'<p>변경이력이 없습니다.</p>'}</section>`;
     if(tab==='settings') body=themeSettings()+body;
     if(tab==='saving') body=savingGoalsView();
@@ -78,7 +79,7 @@
     if(tab==='fixed') body=fixedView();
     if(tab==='transactions') body=searchView(monthly);
     if(tab==='home') body=quickView(active)+body;
-    draw(`<div class="toolbar"><label>조회 월 <input id="month" type="month" value="${month}"></label><span id="sync">약 5초 간격 동기화</span>${btn('refresh','새로고침')}${btn('transaction','+ 거래 입력')}</div><nav>${[['home','요약'],['transactions','거래'],['saving','목표 저축'],['analysis','분석'],['fixed','고정비'],['budgets','예산'],['accounts','자산'],['trash','휴지통'],['settings','설정']].map(([k,t])=>`<button data-action="tab" data-id="${k}" aria-current="${tab===k?'page':'false'}">${t}</button>`).join('')}</nav>${body}`);
+    draw(`<div class="toolbar"><label>조회 월 <input id="month" type="month" value="${month}"></label><span id="sync">약 5초 간격 동기화</span>${btn('refresh','새로고침')}${btn('transaction','+ 거래 입력')}</div><nav>${[['home','요약'],['transactions','거래'],['saving','목표 저축'],['analysis','분석'],['fixed','고정비'],['budgets','예산'],['accounts','자산'],['portfolio','포트폴리오'],['trash','휴지통'],['settings','설정']].map(([k,t])=>`<button data-action="tab" data-id="${k}" aria-current="${tab===k?'page':'false'}">${t}</button>`).join('')}</nav>${body}`);
     for(const detail of root.querySelectorAll('details[data-asset-detail]'))detail.open=expanded.includes(detail.dataset.assetDetail);
   }
   function transactionList(list,trash=false) { return list.map(r=>`<article class="card row"><div><small>${esc(r.txn_date)} · ${labels[r.txn_type]} · ${esc(r.owner_label)}</small><h3>${userText(r.category_name)} · ${won(r.amount)}</h3><p>${userText(r.memo)} ${userText(r.payment_method)}</p>${r.original_currency==='JPY'?`<small>¥${Number(r.original_amount).toLocaleString('ja-JP')} · 1엔 = ${esc(r.fx_rate)}원 · ${esc(r.fx_date||'직접 입력')}${r.fx_source==='manual_amount'?' · 실제 결제액 적용':''}</small><br>`:''}<small>입력: ${userText(data.household_members.find(m=>m.user_id===r.entered_by)?.display_name||'구성원')}</small></div><div>${trash?btn('restore','복구',r.id)+btn('trash-delete-one','완전삭제',r.id):btn('repeat','다시 입력',r.id)+btn('transaction','수정',r.id)+btn('trash','휴지통으로',r.id)}</div></article>`).join('')||'<section class="card">기록이 없습니다.</section>'; }
@@ -125,6 +126,8 @@
   async function submit(form,mode) {
     const f=Object.fromEntries(new FormData(form)), kind=form.dataset.form, id=form.dataset.id;
     let categoryWarning='';
+    if(kind==='portfolio-target'){await submitPortfolioTarget(form,f);return;}
+    if(kind==='portfolio-plan'){submitPortfolioPlan(form,f);return;}
     if(kind==='funding'){await submitFunding(form,f);return;}
     if(kind==='account') normalizeAccountFields(f);
     if(kind==='saving-goal') { f.target_amount=number(f.target_amount); if(f.target_amount<=0)throw Error('목표 금액은 0보다 커야 합니다.'); f.name=f.name.trim();if(!f.name)throw Error('목표 이름을 입력해 주세요.');if(id)await update('saving_goals',id,f);else await checked(db.from('saving_goals').insert({...f,household_id:house.id,created_by:user.id}));$('#editor').close();await refresh(false);dashboard();return; }
@@ -212,6 +215,8 @@
     notice(`${count}건을 ${deleting?'완전삭제':'복구'}했습니다. 다른 기기에서 이미 처리한 거래는 제외됩니다.`);
   }
   async function action(name,id) {
+    if(name==='portfolio-target'){portfolioTargetEditor();return;}
+    if(name==='portfolio-plan'){portfolioPlanEditor();return;}
     if(name==='snapshot-save'){await saveMonthlySnapshot();return;}
     if(name==='snapshot-current'){month=settlementMonth();dashboard();return;}
     if(name==='funding-new'||name==='funding-edit'){fundingEditor(id);return;}
@@ -417,6 +422,68 @@
   }
 
   const JA = Object.fromEntries(`
+포트폴리오|ポートフォリオ
+우리집 포트폴리오|わが家のポートフォリオ
+목표 비중 설정|目標比率の設定
+가장 큰 자산 종류|最も大きい資産区分
+가장 큰 계좌·자산|最も大きい口座・資産
+총자산 대비 부채|総資産に対する負債
+목표와 현재 비중|目標と現在の比率
+추가 자금 배분 계산|追加資金の配分計算
+부채를 제외한 총자산 기준입니다. 목표자금도 해당 계좌의 자산에 한 번만 포함됩니다.|負債を除く総資産が基準です。目的別資金も該当口座の資産に一度だけ含まれます。
+이 범위의 목표는 부부가 함께 사용합니다.|この範囲の目標は夫婦で共有します。
+목표 비중이 없습니다. 직접 정한 비중의 합계가 100%가 되도록 설정하세요.|目標比率がありません。ご自身で決めた比率の合計が100%になるよう設定してください。
+분류를 마치면 추가 자금 배분을 계산할 수 있습니다.|分類後に追加資金の配分を計算できます。
+등록된 자산 금액이 없어 현재 비중을 계산하지 않습니다.|登録された資産金額がないため、現在比率は計算しません。
+현재 금액|現在金額
+허용 차이|許容差
+비교 전|比較前
+목표 초과|目標超過
+목표 미달|目標未満
+허용 범위|許容範囲
+분류 필요|要分類
+투입 후 비중|投入後の比率
+차이|差
+상태|状態
+목표 초과·미달은 입력한 기준과의 차이입니다. 계좌 안의 종목 구성이나 연금 안의 투자 비중은 분석하지 않습니다.|目標超過・未満は入力した基準との差です。口座内の銘柄構成や年金内の投資比率は分析しません。
+목표자금 확인|目的別資金の確認
+미배정 현금|未配分の現金
+현금·예적금에서 확보한 목표자금|現金・預貯金で確保した目的別資金
+목표자금은 그대로 유지합니다. 추가 자금 계산에는 아직 계좌 잔액에 반영하지 않은 새 돈만 입력하세요.|目的別資金は維持されます。追加資金の計算には、まだ口座残高に反映していない新しい資金だけを入力してください。
+자산·목표자금 보기|資産・目的別資金を見る
+포트폴리오 계산 안내|ポートフォリオ計算の案内
+전체 가구와 소유자별 목표는 각각 설정합니다. 소유자 변경 시 해당 범위의 현재 비중도 달라집니다.|世帯全体と所有者別の目標はそれぞれ設定します。所有者を変えると、その範囲の現在比率も変わります。
+허용 차이는 목표에서 벗어나도 허용할 비중 차이입니다. 예를 들어 목표 30%, 허용 차이 5%p이면 25~35%가 허용 범위입니다. 5%p는 초기 입력값이며 권장 투자 기준이 아닙니다.|許容差は目標からの比率のずれの許容幅です。目標30%、許容差5%pなら25〜35%が許容範囲です。5%pは初期入力値であり、推奨する投資基準ではありません。
+자산 종류와 계좌 규모를 비교하는 기능입니다. 같은 계좌 안의 종목 집중도, 레버리지 상품 비중, 투자 수익률은 계산하지 않습니다.|資産区分と口座規模を比較する機能です。口座内の銘柄集中度、レバレッジ商品の比率、投資収益率は計算しません。
+추가 자금은 투입 후 목표금액의 부족분에 비례해 나눕니다. 기존 자산을 매도하지 않으므로 목표 비중에 완전히 도달하지 않을 수 있습니다. 세금·수수료·매수 단위는 반영하지 않습니다.|追加資金は投入後の目標金額の不足分に比例して配分します。既存資産を売却しないため、目標比率に完全には届かない場合があります。税金・手数料・購入単位は反映しません。
+계산은 실제 송금·매매·거래 기록을 만들지 않습니다.|計算しても実際の送金・売買・取引記録は作成されません。
+자산 배분과 리밸런싱 참고자료 (Investor.gov)|資産配分とリバランスの参考資料 (Investor.gov)
+비중 합계는 100%여야 합니다. 사용하지 않는 자산 종류는 0을 입력하세요.|比率の合計は100%にしてください。使わない資産区分には0を入力してください。
+허용 차이 5%p는 초기 입력값이며 권장 투자 기준이 아닙니다.|許容差5%pは初期入力値であり、推奨する投資基準ではありません。
+비중 합계|比率の合計
+이 범위의 목표 비중을 저장할까요? 배우자에게도 같은 목표가 표시됩니다.|この範囲の目標比率を保存しますか？パートナーにも同じ目標が表示されます。
+목표 비중을 저장했습니다.|目標比率を保存しました。
+목표 비중을 확인해 주세요.|目標比率を確認してください。
+비중은 0~100 사이 소수 둘째 자리까지 입력하세요.|比率は0〜100の範囲で小数第2位まで入力してください。
+목표 비중의 합계는 100%여야 합니다.|目標比率の合計は100%にしてください。
+허용 차이는 0~100 사이 소수 둘째 자리까지 입력하세요.|許容差は0〜100の範囲で小数第2位まで入力してください。
+다른 기기에서 목표 비중을 변경했습니다. 새로고침 후 다시 확인하세요.|別の端末で目標比率が変更されました。更新して再確認してください。
+먼저 이 범위의 목표 비중을 설정하세요.|先にこの範囲の目標比率を設定してください。
+미분류 자산의 종류를 지정한 뒤 계산하세요.|未分類資産の区分を設定してから計算してください。
+추가 자금은 0보다 큰 금액으로 소수 둘째 자리까지 입력하세요.|追加資金は0より大きい金額を小数第2位まで入力してください。
+계산 가능한 금액 범위를 초과했습니다.|計算可能な金額の範囲を超えました。
+새로 들어올 금액 (원)|新たに入る金額（ウォン）
+아직 계좌 잔액에 반영하지 않은 외부 추가 자금만 입력하세요. 기존 현금을 다시 입력하면 중복 계산됩니다.|まだ口座残高に反映していない外部からの追加資金だけを入力してください。既存の現金を再入力すると二重計算になります。
+추가 자금 배분안|追加資金の配分案
+추가 자금|追加資金
+투입 후 총자산|投入後の総資産
+추가 배분|追加配分
+화면에 불러온 잔액과 목표로 계산한 결과입니다. 잔액이나 목표가 바뀌면 다시 계산하세요.|画面に読み込んだ残高と目標で計算した結果です。残高や目標が変わったら再計算してください。
+부족분에 비례해 배분한 금액입니다. 기존 자산 매도 없이 목표에 완전히 도달하지 않을 수 있습니다.|不足分に比例した配分額です。既存資産の売却なしでは目標に完全に届かない場合があります。
+계산|計算
+현재|現在
+닫기|閉じる
+
 월별 자산 결산|月別の資産集計
 이번 달 결산 다시 저장|今月の集計を保存し直す
 이번 달 결산 저장|今月の集計を保存
@@ -983,10 +1050,89 @@ Frankfurter 일별 참고환율|Frankfurterの日次参考レート
   }
   const SNAPSHOT_STYLES=`#ourhome-v11 .oh-snapshot-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin:18px 0}#ourhome-v11 .oh-snapshot-stats strong{display:block;font-size:22px;overflow-wrap:anywhere;color:var(--oh-ink)!important;-webkit-text-fill-color:var(--oh-ink)!important}#ourhome-v11 .oh-snapshot-changes{padding:10px 16px;background:var(--oh-soft);border-radius:12px}#ourhome-v11 .oh-snapshot-chart{width:100%;display:block;height:auto}#ourhome-v11 .oh-snapshot-chart text{font-size:11px;fill:var(--oh-muted)}#ourhome-v11 .oh-snapshot-grid{stroke:var(--oh-line);stroke-width:1}#ourhome-v11 .oh-snapshot-zero{stroke:var(--oh-muted);stroke-width:1}#ourhome-v11 .oh-snapshot-line{stroke:var(--oh-ink);stroke-width:2.5}#ourhome-v11 .oh-snapshot-point{fill:var(--oh-ink)}#ourhome-v11 .oh-snapshot-panel details{margin-top:16px}#ourhome-v11 .oh-snapshot-panel summary{cursor:pointer;padding:8px 0}#ourhome-v11 .oh-snapshot-table-wrap{overflow-x:auto}#ourhome-v11 .oh-snapshot-panel table{border-collapse:collapse;min-width:490px;width:100%;font-size:13px}#ourhome-v11 .oh-snapshot-panel td,#ourhome-v11 .oh-snapshot-panel th{padding:12px 6px;border-bottom:1px solid var(--oh-line);text-align:right}#ourhome-v11 .oh-snapshot-panel td:first-child,#ourhome-v11 .oh-snapshot-panel th:first-child{text-align:left}@media(max-width:600px){#ourhome-v11 .oh-snapshot-stats{grid-template-columns:1fr}#ourhome-v11 .oh-snapshot-stats>div{display:flex;justify-content:space-between;align-items:center;gap:10px}#ourhome-v11 .oh-snapshot-stats strong{font-size:20px}}`;
 
+  const portfolioTypes=assetTypes.filter(([id])=>id!=='unclassified');
+  const portfolioScopeLabel=scope=>scope==='all'?'전체 가구':scope;
+  function portfolioTarget(scope=assetOwnerFilter){return (data.portfolio_targets||[]).find(r=>r.owner_scope===scope);}
+  function validatePortfolioTarget(weights,tolerance) {
+    if(!weights||Object.keys(weights).length!==portfolioTypes.length)throw Error('목표 비중을 확인해 주세요.');
+    let total=0;
+    for(const [id] of portfolioTypes){const n=weights[id];if(typeof n!=='number'||!Number.isFinite(n)||n<0||n>100||Math.abs(n*100-Math.round(n*100))>1e-7)throw Error('비중은 0~100 사이 소수 둘째 자리까지 입력하세요.');total+=Math.round(n*100);}
+    if(total!==10000)throw Error('목표 비중의 합계는 100%여야 합니다.');
+    if(!Number.isFinite(tolerance)||tolerance<0||tolerance>100||Math.abs(tolerance*100-Math.round(tolerance*100))>1e-7)throw Error('허용 차이는 0~100 사이 소수 둘째 자리까지 입력하세요.');
+    return {weights,tolerance};
+  }
+  function portfolioSummary(accounts,target,scope='all') {
+    const s=assetSummary(accounts,scope),unknown=s.assetRows.filter(a=>typeOf(a)==='unclassified'),unclassified=sum(unknown);
+    const largestAccount=s.assetRows.reduce((best,a)=>!best||Number(a.amount)>Number(best.amount)?a:best,null);
+    const largestGroup=s.groups.reduce((best,g)=>!best||g.amount>best.amount?g:best,null);
+    const rows=portfolioTypes.map(([id,label])=>{const amount=sum(s.assetRows.filter(a=>typeOf(a)===id)),current=s.assets>0?amount/s.assets*100:null,goal=target?Number(target.weights[id]):null,diff=current!==null&&goal!==null?current-goal:null;
+      return {id,label,amount,current,goal,diff,status:diff===null?'未設定':diff>Number(target.tolerance)+1e-8?'over':diff<-Number(target.tolerance)-1e-8?'under':'within'};});
+    return {s,unclassified,unknownCount:unknown.length,largestAccount,largestGroup,rows,debtRatio:s.assets>0?s.debt/s.assets*100:null};
+  }
+  function portfolioPlan(accounts,target,scope,newAmount) {
+    if(!target)throw Error('먼저 이 범위의 목표 비중을 설정하세요.');
+    validatePortfolioTarget(target.weights,Number(target.tolerance));
+    const p=portfolioSummary(accounts,target,scope);
+    if(p.unclassified>0)throw Error('미분류 자산의 종류를 지정한 뒤 계산하세요.');
+    const cents=Math.round(newAmount*100);
+    if(!Number.isFinite(newAmount)||newAmount<=0||!Number.isSafeInteger(cents)||Math.abs(newAmount*100-cents)>1e-6)throw Error('추가 자금은 0보다 큰 금액으로 소수 둘째 자리까지 입력하세요.');
+    const currentCents=p.rows.map(r=>Math.round(r.amount*100));
+    const totalCents=currentCents.reduce((s,n)=>s+n,0)+cents;
+    if(!Number.isSafeInteger(totalCents)||currentCents.some(n=>!Number.isSafeInteger(n)||n<0))throw Error('계산 가능한 금액 범위를 초과했습니다.');
+    // 외부 추가 자금만 사용합니다. 기존 현금·목표 배정액·보유자산은 매도하거나 이동하지 않습니다.
+    const deficits=p.rows.map((r,i)=>Math.max(0,totalCents*target.weights[r.id]/100-currentCents[i]));
+    const totalDeficit=deficits.reduce((s,n)=>s+n,0);
+    const exact=deficits.map(d=>cents*d/totalDeficit),additions=exact.map(Math.floor);
+    let remainder=cents-additions.reduce((s,n)=>s+n,0);
+    const order=exact.map((n,i)=>({i,f:n-additions[i]})).sort((a,b)=>b.f-a.f||a.i-b.i);
+    for(let i=0;i<remainder;i++)additions[order[i%order.length].i]++;
+    return {newAmount:cents/100,before:p.s.assets,after:totalCents/100,rows:p.rows.map((r,i)=>({...r,addition:additions[i]/100,afterAmount:(currentCents[i]+additions[i])/100,afterPercent:(currentCents[i]+additions[i])/totalCents*100}))};
+  }
+  function portfolioView() {
+    const target=portfolioTarget(),p=portfolioSummary(data.accounts||[],target,assetOwnerFilter),f=fundingSummary(data.accounts||[],data.goal_allocations||[],assetOwnerFilter);
+    const pct=n=>n===null?'—':n.toFixed(1)+'%',status=r=>r.diff===null?'비교 전':r.status==='over'?'목표 초과':r.status==='under'?'목표 미달':'허용 범위';
+    return `<section class="oh-asset-heading"><div><small>OUR HOME · PORTFOLIO</small><h2>우리집 포트폴리오</h2></div>${btn('portfolio-target','목표 비중 설정')}</section><div class="oh-asset-filters" aria-label="소유자 필터">${['all',...assetOwners].map(o=>`<button type="button" data-action="asset-filter" data-id="${o}" aria-pressed="${assetOwnerFilter===o}">${o==='all'?'합계':o}</button>`).join('')}</div>
+    <p>${esc(portfolioScopeLabel(assetOwnerFilter))} · 현재 등록 금액 기준 · 월 필터와 별개</p>
+    <section class="oh-portfolio-metrics"><article><small>가장 큰 자산 종류</small><strong>${p.s.assets>0?esc(p.largestGroup.label):'—'}</strong><span>${p.s.assets>0?pct(p.largestGroup.amount/p.s.assets*100):'—'}</span></article><article><small>가장 큰 계좌·자산</small><strong>${p.s.assets>0?userText(p.largestAccount.name):'—'}</strong><span>${p.s.assets>0?pct(Number(p.largestAccount.amount)/p.s.assets*100):'—'}</span></article><article><small>총자산 대비 부채</small><strong>${pct(p.debtRatio)}</strong><span>${won(p.s.debt)}</span></article></section>
+    <section class="card oh-portfolio-panel"><div class="oh-asset-heading"><h2>목표와 현재 비중</h2>${btn('portfolio-plan','추가 자금 배분 계산')}</div>
+    <p>부채를 제외한 총자산 기준입니다. 목표자금도 해당 계좌의 자산에 한 번만 포함됩니다.</p>
+    ${target?`<p>허용 차이 ±${esc(target.tolerance)}%p · 이 범위의 목표는 부부가 함께 사용합니다.</p>`:'<p>목표 비중이 없습니다. 직접 정한 비중의 합계가 100%가 되도록 설정하세요.</p>'}
+    ${p.unclassified>0?`<p role="status">미분류 자산 ${won(p.unclassified)} · 분류를 마치면 추가 자금 배분을 계산할 수 있습니다.</p>`:''}
+    ${!p.s.assets?'<p>등록된 자산 금액이 없어 현재 비중을 계산하지 않습니다.</p>':''}
+    <div class="oh-portfolio-table"><table><thead><tr><th>자산 종류</th><th>현재 금액</th><th>현재</th><th>목표</th><th>차이</th><th>상태</th></tr></thead><tbody>${p.rows.map(r=>`<tr><th>${r.label}</th><td>${won(r.amount)}</td><td>${pct(r.current)}</td><td>${pct(r.goal)}</td><td>${r.diff===null?'—':(r.diff>0?'+':'')+r.diff.toFixed(1)+'%p'}</td><td><span class="oh-portfolio-badge">${status(r)}</span></td></tr>`).join('')}${p.unclassified>0?`<tr><th>미분류</th><td>${won(p.unclassified)}</td><td>${pct(p.unclassified/p.s.assets*100)}</td><td>—</td><td>—</td><td>분류 필요</td></tr>`:''}</tbody></table></div>
+    <p><small>목표 초과·미달은 입력한 기준과의 차이입니다. 계좌 안의 종목 구성이나 연금 안의 투자 비중은 분석하지 않습니다.</small></p></section>
+    <section class="card"><h2>목표자금 확인</h2><div class="oh-asset-composition-row"><span>미배정 현금</span><strong>${won(f.available)}</strong></div><div class="oh-asset-composition-row"><span>현금·예적금에서 확보한 목표자금</span><strong>${won(f.reserved+f.depositReserved)}</strong></div>${f.over?'<p role="alert">배정액이 계좌 잔액보다 큽니다. 배정을 확인해 주세요.</p>':''}<p>목표자금은 그대로 유지합니다. 추가 자금 계산에는 아직 계좌 잔액에 반영하지 않은 새 돈만 입력하세요.</p>${btn('tab','자산·목표자금 보기','accounts')}</section>
+    <section class="card"><details data-asset-detail="portfolio-help"><summary>ⓘ 포트폴리오 계산 안내</summary><p>전체 가구와 소유자별 목표는 각각 설정합니다. 소유자 변경 시 해당 범위의 현재 비중도 달라집니다.</p><p>허용 차이는 목표에서 벗어나도 허용할 비중 차이입니다. 예를 들어 목표 30%, 허용 차이 5%p이면 25~35%가 허용 범위입니다. 5%p는 초기 입력값이며 권장 투자 기준이 아닙니다.</p><p>자산 종류와 계좌 규모를 비교하는 기능입니다. 같은 계좌 안의 종목 집중도, 레버리지 상품 비중, 투자 수익률은 계산하지 않습니다.</p><p>추가 자금은 투입 후 목표금액의 부족분에 비례해 나눕니다. 기존 자산을 매도하지 않으므로 목표 비중에 완전히 도달하지 않을 수 있습니다. 세금·수수료·매수 단위는 반영하지 않습니다.</p><p>계산은 실제 송금·매매·거래 기록을 만들지 않습니다.</p><a href="https://www.investor.gov/additional-resources/general-resources/publications-research/info-sheets/beginners-guide-asset" target="_blank" rel="noopener noreferrer">자산 배분과 리밸런싱 참고자료 (Investor.gov)</a></details></section>`;
+  }
+  function portfolioTargetEditor() {
+    const scope=assetOwnerFilter,target=portfolioTarget(scope),d=$('#editor');
+    d.innerHTML=`<h2>목표 비중 설정</h2><p>${esc(portfolioScopeLabel(scope))} · 이 범위의 목표는 부부가 함께 사용합니다.</p><form data-form="portfolio-target">${portfolioTypes.map(([id,label])=>field('weight_'+id,label+' (%)',target?.weights[id]??'','number','required min="0" max="100" step="0.01"')).join('')}${field('tolerance','허용 차이 (%p)',target?.tolerance??5,'number','required min="0" max="100" step="0.01"')}<p id="portfolio-weight-total" role="status"></p><p>비중 합계는 100%여야 합니다. 사용하지 않는 자산 종류는 0을 입력하세요.</p><p>허용 차이 5%p는 초기 입력값이며 권장 투자 기준이 아닙니다.</p><button>저장</button>${btn('close','취소')}</form>`;
+    const form=d.querySelector('form');form.dataset.scope=scope;form.dataset.expectedRevision=String(target?.revision??0);d.showModal();portfolioWeightTotal(form);
+  }
+  function portfolioWeightTotal(form) {const total=portfolioTypes.reduce((s,[id])=>s+(Number(form.elements['weight_'+id].value)||0),0);form.querySelector('#portfolio-weight-total').textContent=translateText('비중 합계')+' '+total.toFixed(2)+'%';}
+  async function submitPortfolioTarget(form,fields) {
+    const weights=Object.fromEntries(portfolioTypes.map(([id])=>[id,number(fields['weight_'+id])]));const tolerance=number(fields.tolerance);
+    validatePortfolioTarget(weights,tolerance);
+    const scope=form.dataset.scope;if(scope!=='all'&&!assetOwners.includes(scope))throw Error('소유자를 선택해 주세요.');
+    if(!confirm('이 범위의 목표 비중을 저장할까요? 배우자에게도 같은 목표가 표시됩니다.'))return;
+    await checked(db.rpc('set_portfolio_target',{p_household_id:house.id,p_owner_scope:scope,p_weights:weights,p_tolerance:tolerance,p_expected_revision:Number(form.dataset.expectedRevision)}));
+    $('#editor').close();await refresh(false);dashboard();notice('목표 비중을 저장했습니다.');
+  }
+  function portfolioPlanEditor() {
+    const scope=assetOwnerFilter;if(!portfolioTarget(scope))throw Error('먼저 이 범위의 목표 비중을 설정하세요.');
+    const d=$('#editor');d.innerHTML=`<h2>추가 자금 배분 계산</h2><p>${esc(portfolioScopeLabel(scope))}</p><form data-form="portfolio-plan">${field('amount','새로 들어올 금액 (원)','','number','required')}<p>아직 계좌 잔액에 반영하지 않은 외부 추가 자금만 입력하세요. 기존 현금을 다시 입력하면 중복 계산됩니다.</p><button>계산</button>${btn('close','닫기')}</form><div id="portfolio-plan-result" aria-live="polite"></div>`;d.querySelector('form').dataset.scope=scope;d.showModal();
+  }
+  function submitPortfolioPlan(form,fields) {
+    const scope=form.dataset.scope,target=portfolioTarget(scope),plan=portfolioPlan(data.accounts||[],target,scope,number(fields.amount));
+    const result=$('#portfolio-plan-result');
+    result.innerHTML=`<h3>추가 자금 배분안</h3><p>추가 자금 ${won(plan.newAmount)} · 투입 후 총자산 ${won(plan.after)}</p><div class="oh-portfolio-table"><table><thead><tr><th>자산 종류</th><th>추가 배분</th><th>투입 후 비중</th><th>목표</th></tr></thead><tbody>${plan.rows.map(r=>`<tr><th>${r.label}</th><td>${won(r.addition)}</td><td>${r.afterPercent.toFixed(1)}%</td><td>${r.goal.toFixed(1)}%</td></tr>`).join('')}</tbody></table></div><p>화면에 불러온 잔액과 목표로 계산한 결과입니다. 잔액이나 목표가 바뀌면 다시 계산하세요.</p><p>부족분에 비례해 배분한 금액입니다. 기존 자산 매도 없이 목표에 완전히 도달하지 않을 수 있습니다.</p><p>계산은 실제 송금·매매·거래 기록을 만들지 않습니다.</p>`;
+  }
+  const PORTFOLIO_STYLES=`#ourhome-v11 .oh-portfolio-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin:20px 0}#ourhome-v11 .oh-portfolio-metrics article{background:var(--oh-soft);border:1px solid var(--oh-line);border-radius:18px;padding:20px}#ourhome-v11 .oh-portfolio-metrics strong{display:block;font-size:24px;margin:12px 0;overflow-wrap:anywhere;color:var(--oh-ink)!important;-webkit-text-fill-color:var(--oh-ink)!important}#ourhome-v11 .oh-portfolio-table{overflow-x:auto}#ourhome-v11 .oh-portfolio-table table{width:100%;min-width:540px;border-collapse:collapse;font-size:13px}#ourhome-v11 .oh-portfolio-table th,#ourhome-v11 .oh-portfolio-table td{padding:14px 8px;border-bottom:1px solid var(--oh-line);text-align:right;font-variant-numeric:tabular-nums}#ourhome-v11 .oh-portfolio-table th:first-child{text-align:left}#ourhome-v11 .oh-portfolio-badge{display:inline-block;background:var(--oh-soft);color:var(--oh-ink);padding:5px 8px;border-radius:7px;white-space:nowrap}#ourhome-v11 .oh-portfolio-panel strong{color:var(--oh-ink)!important}#ourhome-v11 #portfolio-plan-result:empty{display:none}@media(max-width:620px){#ourhome-v11 .oh-portfolio-metrics{grid-template-columns:1fr}#ourhome-v11 .oh-portfolio-metrics article{padding:16px}#ourhome-v11 .oh-portfolio-metrics strong{font-size:22px;margin:8px 0}}`;
+
   async function start() {
     document.documentElement.lang='ko';
     root=document.createElement('main'); root.id='ourhome-v11'; document.body.replaceChildren(root);
-    const style=document.createElement('style'); style.textContent=`body{margin:0;background:#f3f6f5;color:#18342e;font-family:system-ui,sans-serif}#ourhome-v11{max-width:1000px;margin:auto;padding:24px 18px 60px}#ourhome-v11 *{box-sizing:border-box}#ourhome-v11 header,.toolbar,.row{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}#ourhome-v11 h1{font-size:26px;margin:8px 0}#ourhome-v11 h2{font-size:21px}#ourhome-v11 h3{margin:9px 0}#ourhome-v11 small{color:#536c64}#ourhome-v11 .card{background:white;padding:22px;border:1px solid #dce6df;border-radius:18px;margin:14px 0}#ourhome-v11 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}#ourhome-v11 button{background:#176950;color:white;border:0;border-radius:10px;padding:12px 16px;margin:4px;cursor:pointer;font:inherit}#ourhome-v11 button[aria-current=page]{background:#133d30;outline:3px solid #b8dacb}#ourhome-v11 label{display:block;margin:12px 0}#ourhome-v11 input,#ourhome-v11 select{display:block;width:100%;font:inherit;padding:12px;border:1px solid #bccfc5;border-radius:9px;margin-top:6px;background:white;color:#18342e}#ourhome-v11 nav{display:flex;gap:4px;flex-wrap:wrap;margin:18px 0}#ourhome-v11 progress{width:100%;accent-color:#176950}#ourhome-v11 dialog{border:0;border-radius:18px;padding:24px;width:min(94vw,520px);max-height:90vh;overflow:auto}#ourhome-v11 dialog::backdrop{background:#16392e88}#ourhome-v11 .auth{max-width:440px;margin:40px auto}#notice{white-space:pre-wrap;color:#8a3a16}#ourhome-v11 p{overflow-wrap:anywhere}#ourhome-v11 [aria-busy=true]{opacity:.7}`; document.head.append(style); const theme=document.createElement('style'); theme.textContent=THEME; document.head.append(theme); const assetStyle=document.createElement('style');assetStyle.textContent=ASSET_STYLES+FUNDING_STYLES+SNAPSHOT_STYLES;document.head.append(assetStyle);
+    const style=document.createElement('style'); style.textContent=`body{margin:0;background:#f3f6f5;color:#18342e;font-family:system-ui,sans-serif}#ourhome-v11{max-width:1000px;margin:auto;padding:24px 18px 60px}#ourhome-v11 *{box-sizing:border-box}#ourhome-v11 header,.toolbar,.row{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}#ourhome-v11 h1{font-size:26px;margin:8px 0}#ourhome-v11 h2{font-size:21px}#ourhome-v11 h3{margin:9px 0}#ourhome-v11 small{color:#536c64}#ourhome-v11 .card{background:white;padding:22px;border:1px solid #dce6df;border-radius:18px;margin:14px 0}#ourhome-v11 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}#ourhome-v11 button{background:#176950;color:white;border:0;border-radius:10px;padding:12px 16px;margin:4px;cursor:pointer;font:inherit}#ourhome-v11 button[aria-current=page]{background:#133d30;outline:3px solid #b8dacb}#ourhome-v11 label{display:block;margin:12px 0}#ourhome-v11 input,#ourhome-v11 select{display:block;width:100%;font:inherit;padding:12px;border:1px solid #bccfc5;border-radius:9px;margin-top:6px;background:white;color:#18342e}#ourhome-v11 nav{display:flex;gap:4px;flex-wrap:wrap;margin:18px 0}#ourhome-v11 progress{width:100%;accent-color:#176950}#ourhome-v11 dialog{border:0;border-radius:18px;padding:24px;width:min(94vw,520px);max-height:90vh;overflow:auto}#ourhome-v11 dialog::backdrop{background:#16392e88}#ourhome-v11 .auth{max-width:440px;margin:40px auto}#notice{white-space:pre-wrap;color:#8a3a16}#ourhome-v11 p{overflow-wrap:anywhere}#ourhome-v11 [aria-busy=true]{opacity:.7}`; document.head.append(style); const theme=document.createElement('style'); theme.textContent=THEME; document.head.append(theme); const assetStyle=document.createElement('style');assetStyle.textContent=ASSET_STYLES+FUNDING_STYLES+SNAPSHOT_STYLES+PORTFOLIO_STYLES;document.head.append(assetStyle);
     applyAppearance();observeLanguage();
     draw('<p>연결 중입니다…</p>');
     db=typeof supabaseClient!=='undefined'?supabaseClient:window.supabaseClient;
@@ -995,6 +1141,7 @@ Frankfurter 일별 참고환율|Frankfurterの日次参考レート
     root.addEventListener('input', e=>{ if(e.target.id==='search') { searchText=e.target.value; renderSearchResults(); } });
     root.addEventListener('change', e=>{ if(e.target.id==='filter-type') { filterType=e.target.value; renderSearchResults(); } if(e.target.id==='filter-owner') { filterOwner=e.target.value; renderSearchResults(); } });
     root.addEventListener('input',moneyInput);
+    root.addEventListener('input',e=>{const form=e.target.closest('form');if(form?.dataset.form==='portfolio-target')portfolioWeightTotal(form);if(form?.dataset.form==='portfolio-plan')$('#portfolio-plan-result').innerHTML='';});
     root.addEventListener('input',e=>{if(['theme-background','theme-button'].includes(e.target.id)&&validColor(e.target.value)){appearance[e.target.id==='theme-background'?'background':'button']=e.target.value;appearance.preset='custom';applyAppearance();for(const x of root.querySelectorAll('[data-theme-hex]'))x.textContent=appearance[x.dataset.themeHex];for(const b of root.querySelectorAll('.theme-options button'))b.setAttribute('aria-pressed','false');}});
     root.addEventListener('change',e=>{if(['theme-background','theme-button'].includes(e.target.id))saveAppearance();});
 
