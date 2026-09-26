@@ -4,7 +4,7 @@
  */
 (() => {
   'use strict';
-  const VERSION = '2.4.0';
+  const VERSION = '2.5.0';
   const labels = {expense:'지출', income:'수입', investment:'저축·투자', asset:'자산', liability:'부채'};
   const esc = x => String(x ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; };
@@ -36,7 +36,7 @@
     if(!house || syncing) return;
     syncing=true; const g=generation, hid=house.id;
     try {
-      const names=['transactions','budgets','accounts','categories','household_members','audit_logs','recurring_expenses','recurring_payments','saving_goals','goal_allocations','asset_snapshots','portfolio_targets'];
+      const names=['transactions','budgets','accounts','categories','household_members','audit_logs','recurring_expenses','recurring_payments','saving_goals','goal_allocations','asset_snapshots','portfolio_targets','strategy_books','strategy_book_changes'];
       const results=await Promise.all(names.map(n => rows(n,hid)));
       const h=await checked(db.from('households').select('*').eq('id',hid).single());
       if(g!==generation) return;
@@ -72,6 +72,7 @@
     if(tab==='budgets') body=`<h2>카테고리별 월 예산</h2>${btn('budget','예산 추가')}<div class="grid">${data.budgets.filter(r=>r.active).map(r=>{const used=sum(monthly.filter(t=>t.txn_type==='expense'&&t.category_name===r.category_name));return `<section class="card"><h3>${userText(r.category_name)}</h3><p>${won(used)} / ${won(r.monthly_limit)}</p><p>${used>r.monthly_limit?'초과 '+won(used-r.monthly_limit):'남음 '+won(r.monthly_limit-used)}</p>${btn('budget','수정',r.id)}${btn('hide-budget','삭제',r.id)}</section>`;}).join('')}</div>`;
     if(tab==='accounts') body=assetsDashboard();
     if(tab==='portfolio') body=portfolioView();
+    if(tab==='strategies') body=strategyView();
     if(tab==='settings') body=`<section class="card"><h2>${userText(house.name)}</h2><p>초대코드 <strong>${esc(house.invite_code)}</strong></p>${btn('copy','초대코드 복사')}<p>${data.household_members.map(m=>`${userText(m.display_name)} (${m.role==='owner'?'관리자':'구성원'})`).join(' · ')}</p>${btn('goals','목표 수정')}</section><section class="card"><h2>백업 및 가져오기</h2>${btn('json','서버 전체 JSON 백업')}${btn('csv','전체 거래 CSV 백업')}${btn('local','v1.0 로컬 데이터 가져오기')}<label>JSON 백업 가져오기<input type="file" id="import-file" accept=".json,application/json"></label><p>가져오기는 거래·예산·자산·카테고리를 추가합니다. 고정비 설정과 납부 연결의 전체 복원은 지원하지 않습니다. 적용 전 내용을 확인할 수 있습니다.</p></section><section class="card"><h2>카테고리</h2>${btn('category','카테고리 추가')}<p>${data.categories.filter(c=>c.active).map(c=>`${userText(c.name)} (${labels[c.kind]})`).join(' · ')}</p></section><section class="card"><h2>최근 변경이력</h2>${data.audit_logs.slice().sort((a,b)=>Number(b.id)-Number(a.id)).slice(0,50).map(r=>`<p>${esc(new Date(r.created_at).toLocaleString('ko-KR'))} · ${userText(data.household_members.find(m=>m.user_id===r.actor_id)?.display_name||'구성원')} · ${esc(r.entity_type)} ${esc(r.action)}</p>`).join('')||'<p>변경이력이 없습니다.</p>'}</section>`;
     if(tab==='settings') body=themeSettings()+body;
     if(tab==='saving') body=savingGoalsView();
@@ -79,7 +80,7 @@
     if(tab==='fixed') body=fixedView();
     if(tab==='transactions') body=searchView(monthly);
     if(tab==='home') body=quickView(active)+body;
-    draw(`<div class="toolbar"><label>조회 월 <input id="month" type="month" value="${month}"></label><span id="sync">약 5초 간격 동기화</span>${btn('refresh','새로고침')}${btn('transaction','+ 거래 입력')}</div><nav>${[['home','요약'],['transactions','거래'],['saving','목표 저축'],['analysis','분석'],['fixed','고정비'],['budgets','예산'],['accounts','자산'],['portfolio','포트폴리오'],['trash','휴지통'],['settings','설정']].map(([k,t])=>`<button data-action="tab" data-id="${k}" aria-current="${tab===k?'page':'false'}">${t}</button>`).join('')}</nav>${body}`);
+    draw(`<div class="toolbar"><label>조회 월 <input id="month" type="month" value="${month}"></label><span id="sync">약 5초 간격 동기화</span>${btn('refresh','새로고침')}${btn('transaction','+ 거래 입력')}</div><nav>${[['home','요약'],['transactions','거래'],['saving','목표 저축'],['analysis','분석'],['fixed','고정비'],['budgets','예산'],['accounts','자산'],['portfolio','포트폴리오'],['strategies','전략 투자'],['trash','휴지통'],['settings','설정']].map(([k,t])=>`<button data-action="tab" data-id="${k}" aria-current="${tab===k?'page':'false'}">${t}</button>`).join('')}</nav>${body}`);
     for(const detail of root.querySelectorAll('details[data-asset-detail]'))detail.open=expanded.includes(detail.dataset.assetDetail);
   }
   function transactionList(list,trash=false) { return list.map(r=>`<article class="card row"><div><small>${esc(r.txn_date)} · ${labels[r.txn_type]} · ${esc(r.owner_label)}</small><h3>${userText(r.category_name)} · ${won(r.amount)}</h3><p>${userText(r.memo)} ${userText(r.payment_method)}</p>${r.original_currency==='JPY'?`<small>¥${Number(r.original_amount).toLocaleString('ja-JP')} · 1엔 = ${esc(r.fx_rate)}원 · ${esc(r.fx_date||'직접 입력')}${r.fx_source==='manual_amount'?' · 실제 결제액 적용':''}</small><br>`:''}<small>입력: ${userText(data.household_members.find(m=>m.user_id===r.entered_by)?.display_name||'구성원')}</small></div><div>${trash?btn('restore','복구',r.id)+btn('trash-delete-one','완전삭제',r.id):btn('repeat','다시 입력',r.id)+btn('transaction','수정',r.id)+btn('trash','휴지통으로',r.id)}</div></article>`).join('')||'<section class="card">기록이 없습니다.</section>'; }
@@ -126,6 +127,7 @@
   async function submit(form,mode) {
     const f=Object.fromEntries(new FormData(form)), kind=form.dataset.form, id=form.dataset.id;
     let categoryWarning='';
+    if(kind.startsWith('strategy-')){await submitStrategy(form,f);return;}
     if(kind==='portfolio-target'){await submitPortfolioTarget(form,f);return;}
     if(kind==='portfolio-plan'){submitPortfolioPlan(form,f);return;}
     if(kind==='funding'){await submitFunding(form,f);return;}
@@ -215,6 +217,7 @@
     notice(`${count}건을 ${deleting?'완전삭제':'복구'}했습니다. 다른 기기에서 이미 처리한 거래는 제외됩니다.`);
   }
   async function action(name,id) {
+    if(name.startsWith('strategy-')){await strategyAction(name,id);return;}
     if(name==='portfolio-target'){portfolioTargetEditor();return;}
     if(name==='portfolio-plan'){portfolioPlanEditor();return;}
     if(name==='snapshot-save'){await saveMonthlySnapshot();return;}
@@ -422,6 +425,259 @@
   }
 
   const JA = Object.fromEntries(`
+전략 투자|戦略投資
+전략 만들기|戦略を作成
+전략 가져오기|戦略を読み込む
+USD 보조 원장입니다. 기존 자산 계좌 금액에 다시 합산하지 않습니다.|USD建ての補助元帳です。既存の資産口座の金額に重複して加算しません。
+등록 전략 평가액 합계|登録戦略の評価額合計
+등록 전략 현금 합계|登録戦略の現金合計
+평가가격 또는 기록 확인 필요|評価価格または記録の確認が必要
+입력한 평가가격 기준|入力した評価価格が基準
+생활비·비상금과 구분하세요.|生活費・緊急予備資金と分けてください。
+진행 전략 보기|運用中の戦略を見る
+보관 전략 보기|保管した戦略を見る
+첫 전략을 기록해 보세요.|最初の戦略を記録しましょう。
+전략을 만든 뒤 최초 입금부터 실제 체결을 순서대로 입력하세요.|戦略を作成し、最初の入金から実際の約定を順番に入力してください。
+기존 보유분을 시작할 때는 과거 거래를 기록해야 전체 손익이 맞습니다.|既存の保有分は過去の取引を記録すると全期間の損益が一致します。
+기록 확인|記録を確認
+전략 백업|戦略のバックアップ
+계산과 기록 안내|計算と記録の案内
+무한매수법 V4.0은 20·40분할, VR5.0은 기본공식을 지원합니다.|無限買付法V4.0は20・40分割、VR5.0は基本式に対応しています。
+주문표는 확인용 계산입니다. 증권사에 주문을 전송하지 않습니다.|注文表は確認用の計算です。証券会社への注文送信は行いません。
+V와 밴드는 매매 기준이며 수익이나 손실 한도가 아닙니다.|Vとバンドは売買基準であり、利益や損失の限度ではありません。
+손익 평단은 매수 수수료를 포함하고, 주문 규칙 평단은 수수료를 제외합니다. 증권사 평단과 대조하세요.|損益計算の平均取得単価は買付手数料込み、注文ルールの平均単価は手数料抜きです。証券会社の平均単価と照合してください。
+두 전략을 함께 운용해도 같은 종목의 위험은 겹칩니다. 위 합계는 등록한 전략만 포함합니다.|両戦略を運用しても同じ銘柄のリスクは重なります。上記合計は登録した戦略のみを含みます。
+수익률·자동 시세·원화 환산·세금 추정·주식분할 자동 처리는 지원하지 않습니다.|収益率・自動株価取得・ウォン換算・税額推定・株式分割の自動処理には対応していません。
+현금 Pool|現金Pool
+주식 평가액|株式評価額
+누적 실현손익|累積実現損益
+평가손익|評価損益
+누적 순입금|累積純入金
+총손익|総損益
+전략 정보|戦略情報
+기본공식|基本式
+연결 계좌|連携口座
+잔액은 자동 변경하지 않습니다.|残高は自動変更しません。
+보유수량|保有数量
+손익 평단|損益用平均単価
+규칙 평단|ルール用平均単価
+평가가격 기준일|評価価格の基準日
+직접 입력한 가격입니다.|手動入力した価格です。
+체결·입출금 기록|約定・入出金を記録
+평가가격 입력|評価価格を入力
+하루 결과 확정|一日の結果を確定
+사이클 시작|サイクルを開始
+주문표 계산|注文表を計算
+리버스모드|リバースモード
+일반모드|通常モード
+미확정 체결이 있습니다. 하루 결과를 확정하세요.|未確定の約定があります。一日の結果を確定してください。
+하루 결과 확정 후 다음 주문표를 계산합니다.|一日の結果確定後に次の注文表を計算します。
+리버스 첫날은 MOC 매도만 진행합니다.|リバース初日はMOC売却のみです。
+사이클 매수 한도|サイクルの買付上限
+남은 한도|残りの上限額
+실제 매수액이 사이클 한도를 초과했습니다.|実際の買付額がサイクルの上限を超えています。
+초기 입금과 매수를 기록한 뒤 최초 사이클을 시작하세요.|初期入金と買付を記録してから最初のサイクルを開始してください。
+누적 실현손익 추이|累積実現損益の推移
+V 기준값 추이|V基準値の推移
+전체 기록|全記録
+보관 해제|保管を解除
+전략 보관|戦略を保管
+전략 이름|戦略名
+연결 안 함|連携なし
+전략 종류|戦略の種類
+무한매수법 V4.0|無限買付法V4.0
+종목|銘柄
+분할수|分割数
+운용 방식|運用方式
+적립식|積立式
+거치식|据置式
+인출식|取崩式
+시작 G|開始G
+최초 V (USD)|初期V (USD)
+거래 기록이 생기면 공식과 초기 설정은 고정됩니다.|取引記録がある場合、公式と初期設定は固定されます。
+거래 날짜|取引日
+같은 날 순서|同日の順序
+기록 종류|記録の種類
+체결 수량|約定数量
+체결 가격 (USD)|約定価格 (USD)
+수수료 (USD)|手数料 (USD)
+금액 (USD)|金額 (USD)
+실제 체결 가격과 수수료를 입력하세요. 주문표 가격은 체결 가격이 아닙니다.|実際の約定価格と手数料を入力してください。注文表の価格は約定価格ではありません。
+새 기록이 평가일보다 늦으면 평가가격을 다시 입력해야 합니다.|新しい記録が評価日より後の場合、評価価格の再入力が必要です。
+미국 거래일|米国取引日
+하루 매수 결과|一日の買付結果
+매수 없음|買付なし
+절반 예산 매수|半分の予算で買付
+전체 예산 매수|全予算で買付
+쿼터매수|クォーター買付
+하루 매도 결과|一日の売却結果
+매도 없음|売却なし
+쿼터매도|クォーター売却
+목표가 매도·전량 매도|目標価格売却・全量売却
+리버스 분할매도|リバース分割売却
+확정 종가 (USD)|確定終値 (USD)
+증권사 평단 (선택)|証券会社の平均単価（任意）
+같은 날 모든 체결을 입력한 뒤 한 번만 확정하세요. 부분 체결로 결과를 판단할 수 없으면 확정을 보류하세요.|同日の全約定を入力してから一度だけ確定してください。一部約定で結果を判断できない場合は確定を保留してください。
+목표가 매도 후 LOC 재매수도 같은 날 결과에 포함하세요.|目標価格売却後のLOC再買付も同日の結果に含めてください。
+사이클 시작일|サイクル開始日
+이번 사이클 G|今回のサイクルG
+적립금 (USD)|積立額 (USD)
+인출금 (USD)|取崩額 (USD)
+적립·인출은 여기에서 한 번만 입력하세요. 현금과 V에 함께 반영됩니다.|積立・取崩しはこちらで一度だけ入力してください。現金とVの両方に反映されます。
+최초 사이클은 입금·초기 매수를 먼저 기록하고 적립·인출 0으로 시작합니다.|初回は入金・初期買付を先に記録し、積立・取崩額0で開始します。
+이전 기록|前の記録
+다음 기록|次の記録
+기록 삭제|記録を削除
+주문 기준 날짜|注文の基準日
+수수료 여유액 (USD)|手数料の予備額 (USD)
+규칙 평단 (선택)|ルール用平均単価（任意）
+첫 매수 LOC 가격 (USD)|初回買付LOC価格 (USD)
+직전 5거래일 종가|直前5取引日の終値
+한 줄에 날짜와 종가를 입력하세요. 실제 직전 미국 거래일 5개인지 확인하세요.|各行に日付と終値を入力してください。直前の米国5取引日であることを確認してください。
+수수료 여유액을 제외한 예산으로 계산합니다.|手数料の予備額を差し引いた予算で計算します。
+전략 기록을 저장했습니다.|戦略の記録を保存しました。
+매수 예산|買付予算
+주문 방식|注文方式
+가격 (USD)|価格 (USD)
+종가 시장가|終値成行
+예산 안에서 주문 가능한 수량이 없습니다.|予算内で注文できる数量がありません。
+주문표 CSV|注文表CSV
+2MB 이하의 전략 백업 파일을 선택하세요.|2MB以下の戦略バックアップを選択してください。
+전략 백업 파일을 선택하세요.|戦略バックアップファイルを選択してください。
+새 전략으로 가져오기|新しい戦略として読み込む
+전략 백업 파일|戦略バックアップファイル
+기존 전략을 덮어쓰지 않고 새 전략으로 복원합니다. 중복된 전략은 보관하세요.|既存の戦略を上書きせず、新しい戦略として復元します。重複する戦略は保管してください。
+주문표를 다시 계산하세요.|注文表を再計算してください。
+기록을 다시 열어 주세요.|記録を開き直してください。
+기록을 찾을 수 없습니다.|記録が見つかりません。
+이 기록을 삭제하고 이후 계산을 다시 할까요?|この記録を削除して以降を再計算しますか？
+전략을 선택해 주세요.|戦略を選択してください。
+기록이 두 개 이상 쌓이면 추이를 표시합니다.|記録が2件以上になると推移を表示します。
+납부 세금|納付税金
+하루 확정|一日の確定
+VR 사이클|VRサイクル
+입금|入金
+출금|出金
+매수|買付
+매도|売却
+배당|配当
+수수료|手数料
+사이클|サイクル
+밴드|バンド
+수량|数量
+전반|前半
+후반|後半
+매수 가격은 하단/매수 전 수량을 센트 내림, 매도 가격은 상단/매도 전 수량을 센트 올림합니다.|買付価格は下限/買付前数量をセント切捨て、売却価格は上限/売却前数量をセント切上げします。
+사이클 한도는 매수 수수료를 포함해 사용하며 매도대금으로 재충전하지 않습니다.|サイクル上限は買付手数料を含めて消費し、売却代金で補充しません。
+첫 매수 LOC 가격은 증권사 주문 가능 범위를 확인해 직접 입력합니다.|初回買付LOC価格は証券会社の注文可能範囲を確認し、手動入力します。
+전반 주문표는 평단 위에서 절반 예산, 평단 이하에서 전체 예산을 넘지 않도록 정수 수량을 배분합니다.|前半の注文表は平均単価より上では半分、以下では全予算を超えないよう整数数量を配分します。
+입력한 날짜가 실제 직전 5거래일인지 확인하세요. 미국 휴장일은 자동 조회하지 않습니다.|入力日が直前5取引日であることを確認してください。米国休場日は自動照会しません。
+LOC는 조건 충족 시 실제 종가에 체결됩니다. 표의 모든 주문이 각 지정 가격에 체결된다고 계산하지 않습니다.|LOCは条件を満たすと実際の終値で約定します。表の各指定価格で約定するとは計算しません。
+표는 최대 약 80단계입니다. 깊은 하락에서는 추가 주문표가 필요할 수 있습니다.|表は最大約80段階です。大幅下落では追加の注文表が必要な場合があります。
+매수·매도 각각 최대 80단계이며 일부 주문표만 표시될 수 있습니다.|買付・売却はそれぞれ最大80段階で、注文表の一部のみ表示される場合があります。
+주문표 계산 가능한 금액 범위를 초과했습니다.|注文表で計算できる金額の範囲を超えています。
+값을 확인하세요.|値を確認してください。
+전략 이름·소유자·종류를 확인하세요.|戦略名・所有者・種類を確認してください。
+무한매수법은 TQQQ/SOXL의 20·40분할을 지원합니다.|無限買付法はTQQQ/SOXLの20・40分割に対応します。
+VR 종목·방식·G를 확인하세요.|VRの銘柄・方式・Gを確認してください。
+기록은 최대 10,000개입니다.|記録は最大10,000件です。
+기록의 ID·날짜·순서·종류를 확인하세요.|記録のID・日付・順序・種類を確認してください。
+같은 날짜의 순서가 중복되었습니다.|同じ日付の順序が重複しています。
+메모는 300자 이내입니다.|メモは300文字以内です。
+하루 확정 뒤의 거래는 다음 날짜에 기록하세요. 같은 날 거래는 확정 기록 앞에 배치하세요.|一日の確定後の取引は次の日付に記録してください。同日の取引は確定記録の前に配置してください。
+무한매수법 진행 중에는 외부 입출금을 넣을 수 없습니다.|無限買付法の運用中は外部からの入出金を追加できません。
+이전 날짜의 하루 결과를 먼저 확정하세요.|前の日付の結果を先に確定してください。
+2주가 지났습니다. 다음 사이클을 먼저 시작하세요.|2週間が経過しました。次のサイクルを先に開始してください。
+VR 시작 후 적립·인출은 사이클 전환에서 기록하세요.|VR開始後の積立・取崩しはサイクル切替時に記録してください。
+VR에는 무한매수법 하루 확정을 넣을 수 없습니다.|VRには無限買付法の一日確定を入力できません。
+하루 확정 날짜가 중복되거나 역순입니다.|確定日が重複しているか逆順です。
+거래 날짜와 하루 확정 날짜가 다릅니다.|取引日と確定日が異なります。
+하루 매수·매도 결과를 선택하세요.|一日の買付・売却結果を選択してください。
+실제 체결 기록과 하루 매수·매도 결과가 다릅니다.|実際の約定記録と一日の売買結果が異なります。
+주문 규칙은 정수 주식만 지원합니다.|注文ルールは整数株数のみに対応しています。
+일반모드에서는 리버스 매도를 선택할 수 없습니다.|通常モードではリバース売却を選択できません。
+쿼터매도와 LOC 매수가 함께 체결된 날은 원본의 일반 처리 범위를 벗어납니다. 체결 내역을 확인하세요.|クォーター売却とLOC買付が同日に約定した場合は原文の通常処理の範囲外です。約定履歴を確認してください。
+쿼터매도 수량이 보유수량의 1/4 내림과 다릅니다. 부분 체결일은 아직 확정하지 마세요.|クォーター売却数量が保有数の1/4切捨てと異なります。一部約定の日はまだ確定しないでください。
+목표가 매도 후 잔여 보유가 있는 예외입니다. 원본 세칙 확인 전 자동 T 확정을 지원하지 않습니다.|目標価格売却後に残高がある例外です。原文の詳細確認前はTの自動確定に対応しません。
+목표가 매도 후 재매수는 나머지 3/4 매도 체결을 확인해야 합니다.|目標価格売却後の再買付は残り3/4の売却約定を確認する必要があります。
+후반전은 절반 매수로 확정할 수 없습니다. 부분 체결 여부를 확인하세요.|後半は半分買付として確定できません。一部約定か確認してください。
+리버스 하루 결과는 쿼터매수 또는 분할매도입니다.|リバースの一日の結果はクォーター買付または分割売却です。
+리버스 첫날은 매수 없이 MOC 매도만 합니다.|リバース初日は買付をせずMOC売却のみです。
+리버스 첫날 MOC 매도 체결을 기록한 뒤 확정하세요.|リバース初日のMOC売却約定を記録してから確定してください。
+리버스 매도 수량을 확인하세요. 부분 체결일은 아직 확정하지 마세요.|リバース売却数量を確認してください。一部約定の日はまだ確定しないでください。
+무한매수법에는 VR 사이클을 넣을 수 없습니다.|無限買付法にはVRサイクルを入力できません。
+다음 VR 사이클은 이전 시작일의 14일 뒤입니다. 누락된 사이클을 순서대로 기록하세요.|次のVRサイクルは前回開始日の14日後です。未記録のサイクルを順に入力してください。
+G는 1~1000 정수입니다.|Gは1～1000の整数です。
+같은 사이클의 적립과 인출 중 하나만 입력하세요.|同じサイクルでは積立か取崩しの一方だけを入力してください。
+전략의 적립·거치·인출 방식과 금액이 다릅니다.|戦略の積立・据置・取崩方式と金額が一致しません。
+최초 사이클은 시작 자금과 초기 매수를 먼저 기록하고 적립·인출은 0으로 시작하세요.|初回は開始資金と初期買付を先に記録し、積立・取崩額は0で開始してください。
+인출 후 V 또는 잔금이 부족합니다.|取崩し後のVまたは現金が不足しています。
+VR 최초 매수 또는 보유수량을 먼저 기록하세요.|VRの初回買付または保有数量を先に記録してください。
+전략 설정이 필요합니다.|戦略設定が必要です。
+평가가격은 마지막 기록 날짜 이후여야 합니다.|評価価格は最後の記録日以降である必要があります。
+예약된 기록 필드입니다.|予約された記録フィールドです。
+주문 기준 날짜를 입력하세요.|注文の基準日を入力してください。
+마지막 기록보다 이전 날짜로 주문표를 만들 수 없습니다.|最後の記録より前の日付では注文表を作成できません。
+주문표는 정수 주식만 지원합니다.|注文表は整数株数のみに対応しています。
+먼저 VR 최초 사이클을 시작하세요.|先にVRの初回サイクルを開始してください。
+VR 보유수량이 0주인 경우의 재시작 세칙을 확인해야 합니다.|VR保有数量が0株の場合の再開始ルールを確認する必要があります。
+다음 VR 사이클을 먼저 시작하세요.|次のVRサイクルを先に開始してください。
+체결 내역의 하루 결과를 먼저 확정하세요.|約定履歴の一日の結果を先に確定してください。
+확정한 종가 다음 거래일의 주문 날짜를 입력하세요.|確定終値の翌取引日以降の注文日を入力してください。
+리버스 매도 수량이 0주입니다. 소량 보유 세칙 확인이 필요합니다.|リバース売却数量が0株です。少量保有の詳細ルール確認が必要です。
+직전 5거래일 종가 5개가 필요합니다.|直前5取引日の終値が5つ必要です。
+종가는 서로 다른 이전 거래일 5개를 입력하세요.|終値には異なる直前5取引日を入力してください。
+계산된 주문 가격이 0 이하입니다. 입력값을 확인하세요.|計算された注文価格が0以下です。入力値を確認してください。
+다른 기기에서 전략을 변경했습니다. 새로고침 후 다시 확인하세요.|別の端末で戦略が変更されました。更新して再確認してください。
+이 가계부에 접근할 수 없습니다.|この家計簿にアクセスできません。
+전략 데이터 형식 또는 크기를 확인하세요.|戦略データの形式またはサイズを確認してください。
+잔여 현금이 부족합니다.|現金残高が不足しています。
+보유 수량보다 많이 매도할 수 없습니다.|保有数量を超えて売却できません。
+소수 8자리 이내의 숫자 문자열이 필요합니다.|小数点以下8桁以内の数値文字列が必要です。
+0보다 커야 합니다.|0より大きい値が必要です。
+마지막 거래보다 오래된 평가가격입니다.|最後の取引より古い評価価格です。
+처리하지 못했습니다|処理できませんでした
+최근 전략 변경이력|最近の戦略変更履歴
+변경된 기록|変更された記録
+삭제 기록 복구|削除した記録を復元
+복구할 삭제 기록을 찾을 수 없습니다.|復元する削除済み記録が見つかりません。
+이미 같은 기록이 있습니다.|同じ記録が既に存在します。
+거래 날짜는 미국 거래일을 입력합니다.|取引日には米国の取引日を入力してください。
+이전 변경이력 보기|以前の変更履歴を見る
+주가 확인|株価を確認
+시세·차트 열기|株価・チャートを開く
+시세·차트|株価・チャート
+TradingView · USD · 지연 가능|TradingView · USD · 遅延の可能性あり
+출처: TradingView · USD|提供元: TradingView · USD
+제공처에 따라 지연될 수 있습니다. 차트의 거래 시간과 시장 상태를 확인하세요.|提供元によって遅延する場合があります。チャートの取引時間と市場の状態を確認してください。
+화면이 표시되지 않으면 아래 종목 페이지에서 확인하세요.|表示されない場合は、下の銘柄ページで確認してください。
+이 화면의 가격은 확인용입니다. 평가가격·확정 종가·체결 기록에 자동으로 저장되지 않습니다.|表示価格は参照用です。評価価格・確定終値・約定記録には自動保存されません。
+이렇게 사용하세요|使い方
+주문 전|注文前
+체결 후|約定後
+장 마감 후|市場終了後
+2주마다|2週間ごと
+현재 기록으로 매수·매도 가격과 수량을 계산하고 증권사에서 주문하세요.|現在の記録から売買価格と数量を計算し、証券会社で注文してください。
+주문 가격·수량 보기|注文価格・数量を確認
+증권사에서 실제로 체결된 수량·가격·수수료를 기록하세요.|証券会社で実際に約定した数量・価格・手数料を記録してください。
+그날 체결을 모두 기록한 뒤 T값과 다음 매매 단계를 갱신합니다.|当日の約定をすべて記録してから、T値と次の取引段階を更新します。
+새 사이클의 V·밴드·매수 한도를 갱신합니다. 매일 확정할 필요는 없습니다.|新しいサイクルのV・バンド・買付上限を更新します。毎日の確定は不要です。
+오늘 체결 마감 · T값 갱신|当日の約定を確定・T値更新
+2주 사이클 시작·갱신|2週間サイクル開始・更新
+처음에는 입금부터 기록하세요. 주문표를 보는 것만으로 잔금이나 보유수량이 바뀌지 않습니다.|最初は入金から記録してください。注文表の確認だけでは残高や保有数量は変わりません。
+손익 계산용 평가가격 입력|損益計算用の評価価格を入力
+미확정 체결이 있습니다. 장 마감 후 T값을 갱신하세요.|未確定の約定があります。市場終了後にT値を更新してください。
+체결 마감으로 T값을 갱신한 뒤 다음 거래일 주문표를 계산합니다.|約定確定でT値を更新してから、次の取引日の注文表を計算します。
+미국 장 마감 후 사용하는 기능입니다. 이미 입력한 체결을 기준으로 T값·일반/리버스모드·사이클을 갱신합니다.|米国市場終了後に使います。入力済みの約定を基にT値・通常/リバースモード・サイクルを更新します。
+예: 일반모드에서 하루 전체 예산을 매수하면 T가 1 증가합니다. 체결 건수만큼 증가하지 않습니다.|例：通常モードで1日分の全予算を買付するとTが1増えます。約定件数ごとには増えません。
+아래 선택은 체결 기록을 대신하지 않습니다. 실제 매수·매도 기록을 먼저 입력하세요.|以下の選択は約定記録の代わりではありません。実際の売買を先に記録してください。
+증권사에 입력할 주문 가격·수량·방식을 미리 계산합니다. 계산만으로 주문되거나 체결 기록이 생기지는 않습니다.|証券会社に入力する注文価格・数量・方式を事前に計算します。計算だけでは発注も約定記録の作成も行いません。
+무한매수는 직전 거래일의 체결 마감을, VR은 현재 2주 사이클을 먼저 확인하세요.|無限買付は前取引日の約定確定を、VRは現在の2週間サイクルを先に確認してください。
+시세·차트는 외부 제공 화면입니다. 손익에는 직접 저장한 평가가격을 사용합니다. 원화 환산·세금 추정·주식분할 자동 처리는 지원하지 않습니다.|株価・チャートは外部提供の画面です。損益は手動保存した評価価格で計算します。ウォン換算・税額推定・株式分割の自動処理は未対応です。
+토스 PC 시세 열기 ↗|Toss PC株価を開く ↗
+이 PC에서 연결 프로그램을 실행한 뒤 이용하세요. 토스 현재가는 5초 간격으로 조회합니다.|このPCで接続プログラムを起動してからご利用ください。Tossの現在値は5秒間隔で取得します。
+
+
 포트폴리오|ポートフォリオ
 우리집 포트폴리오|わが家のポートフォリオ
 목표 비중 설정|目標比率の設定
@@ -860,7 +1116,7 @@ Frankfurter 일별 참고환율|Frankfurterの日次参考レート
       if(node.parentElement?.closest('[data-user-text],.languages,script,style,textarea'))continue;
       // Option values and all user-provided names are never changed.
       const option=node.parentElement?.closest('option');
-      if(option && ['category_name','saving_goal_id','funding_account_id','funding_goal_id'].includes(option.parentElement.name) && option.value && option.value!=='__new_category__')continue;
+      if(option && ['category_name','saving_goal_id','funding_account_id','funding_goal_id','accountId'].includes(option.parentElement.name) && option.value && option.value!=='__new_category__')continue;
       const previous=translatedNodes.get(node);
       const original=previous&&node.nodeValue===previous.output?previous.original:node.nodeValue;
       const output=translateText(original);translatedNodes.set(node,{original,output});if(node.nodeValue!==output)node.nodeValue=output;
@@ -1129,10 +1385,565 @@ Frankfurter 일별 참고환율|Frankfurterの日次参考レート
   }
   const PORTFOLIO_STYLES=`#ourhome-v11 .oh-portfolio-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin:20px 0}#ourhome-v11 .oh-portfolio-metrics article{background:var(--oh-soft);border:1px solid var(--oh-line);border-radius:18px;padding:20px}#ourhome-v11 .oh-portfolio-metrics strong{display:block;font-size:24px;margin:12px 0;overflow-wrap:anywhere;color:var(--oh-ink)!important;-webkit-text-fill-color:var(--oh-ink)!important}#ourhome-v11 .oh-portfolio-table{overflow-x:auto}#ourhome-v11 .oh-portfolio-table table{width:100%;min-width:540px;border-collapse:collapse;font-size:13px}#ourhome-v11 .oh-portfolio-table th,#ourhome-v11 .oh-portfolio-table td{padding:14px 8px;border-bottom:1px solid var(--oh-line);text-align:right;font-variant-numeric:tabular-nums}#ourhome-v11 .oh-portfolio-table th:first-child{text-align:left}#ourhome-v11 .oh-portfolio-badge{display:inline-block;background:var(--oh-soft);color:var(--oh-ink);padding:5px 8px;border-radius:7px;white-space:nowrap}#ourhome-v11 .oh-portfolio-panel strong{color:var(--oh-ink)!important}#ourhome-v11 #portfolio-plan-result:empty{display:none}@media(max-width:620px){#ourhome-v11 .oh-portfolio-metrics{grid-template-columns:1fr}#ourhome-v11 .oh-portfolio-metrics article{padding:16px}#ourhome-v11 .oh-portfolio-metrics strong{font-size:22px;margin:8px 0}}`;
 
+  const StrategyEngine=(()=>{
+'use strict';
+const { evaluateLedger } = (()=>{
+'use strict';
+
+// Development foundation only. One USD strategy per ledger, from inception.
+// Decimal strings avoid binary floating-point errors. No strategy/order rules.
+const SCALE = 100000000n;
+const TYPES = new Set(['deposit', 'withdrawal', 'buy', 'sell', 'dividend', 'fee', 'tax']);
+
+function decimal(value, label, allowZero = true) {
+  if (typeof value !== 'string' || !/^\d+(\.\d{1,8})?$/.test(value)) {
+    throw new Error(`${label}: 소수 8자리 이내의 숫자 문자열이 필요합니다.`);
+  }
+  const [whole, fraction = ''] = value.split('.');
+  const result = BigInt(whole) * SCALE + BigInt(fraction.padEnd(8, '0'));
+  if (!allowZero && result === 0n) throw new Error(`${label}: 0보다 커야 합니다.`);
+  return result;
+}
+
+function format(value) {
+  const sign = value < 0n ? '-' : '';
+  const n = value < 0n ? -value : value;
+  const fraction = (n % SCALE).toString().padStart(8, '0').replace(/0+$/, '');
+  return sign + (n / SCALE) + (fraction ? '.' + fraction : '');
+}
+
+function divideRounded(numerator, denominator) {
+  if (denominator <= 0n || numerator < 0n) throw new Error('잘못된 나눗셈입니다.');
+  return (numerator + denominator / 2n) / denominator;
+}
+
+function validDate(value) {
+  return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) &&
+    Number.isFinite(Date.parse(value)) && new Date(value).toISOString().slice(0, 10) === value;
+}
+
+function evaluateLedger(events, quote = null) {
+  if (!Array.isArray(events)) throw new Error('거래 목록이 필요합니다.');
+  const seen = new Set();
+  const positions = new Set();
+  const ordered = events.map(event => {
+    if (!event || typeof event.id !== 'string' || !event.id.trim() || seen.has(event.id)) {
+      throw new Error('거래 ID가 없거나 중복되었습니다.');
+    }
+    seen.add(event.id);
+    if (!TYPES.has(event.type)) throw new Error('지원하지 않는 거래 종류입니다.');
+    if (event.currency !== 'USD') throw new Error('이 원장은 USD만 지원합니다.');
+    if (!validDate(event.date) || !Number.isSafeInteger(event.sequence) || event.sequence < 1) {
+      throw new Error('거래 날짜와 하루 안의 체결 순서를 확인하세요.');
+    }
+    const position = `${event.date}:${event.sequence}`;
+    if (positions.has(position)) throw new Error('같은 날짜의 체결 순서가 중복되었습니다.');
+    positions.add(position);
+    return { ...event };
+  }).sort((a, b) => a.date.localeCompare(b.date) || a.sequence - b.sequence);
+
+  let cash = 0n, quantity = 0n, cost = 0n, funding = 0n, ruleCost = 0n;
+  let realized = 0n, distributions = 0n, otherCosts = 0n, fees = 0n, taxes = 0n;
+  const history = [];
+  for (const event of ordered) {
+    const charge = decimal(event.fee ?? '0', '수수료');
+    let eventRealized = 0n;
+    if (event.type === 'buy' || event.type === 'sell') {
+      const units = decimal(event.quantity, '수량', false);
+      const price = decimal(event.price, '가격', false);
+      const gross = divideRounded(units * price, SCALE);
+      if (!gross) throw new Error('체결금액이 지원 정밀도보다 작습니다.');
+      if (event.type === 'buy') {
+        cash -= gross + charge;
+        quantity += units;
+        cost += gross + charge;
+        ruleCost += gross;
+      } else {
+        if (units > quantity) throw new Error('보유 수량보다 많이 매도할 수 없습니다.');
+        const allocatedCost = units === quantity ? cost : divideRounded(cost * units, quantity);
+        const allocatedRuleCost = units === quantity ? ruleCost : divideRounded(ruleCost * units, quantity);
+        cash += gross - charge;
+        quantity -= units;
+        cost -= allocatedCost;
+        ruleCost -= allocatedRuleCost;
+        eventRealized = gross - charge - allocatedCost;
+        realized += eventRealized;
+      }
+      fees += charge;
+    } else {
+      // A standalone fee/tax is already an expense; never add another fee to it.
+      if (charge !== 0n) throw new Error('비매매 수수료는 별도 수수료 거래로 기록하세요.');
+      const amount = decimal(event.amount, '금액', false);
+      if (event.type === 'deposit') { cash += amount; funding += amount; }
+      if (event.type === 'withdrawal') { cash -= amount; funding -= amount; }
+      if (event.type === 'dividend') { cash += amount; distributions += amount; }
+      if (event.type === 'fee' || event.type === 'tax') {
+        cash -= amount; otherCosts += amount;
+        if (event.type === 'fee') fees += amount;
+        else taxes += amount;
+      }
+    }
+    if (cash < 0n) throw new Error(`${event.id}: 잔여 현금이 부족합니다.`);
+    history.push({ id: event.id, date: event.date, cycleId: event.cycleId ?? null,
+      mode: event.mode ?? null, cash: format(cash), quantity: format(quantity),
+      costBasis: format(cost), tradeRealized: format(eventRealized),
+      ruleAverage: quantity ? format(divideRounded(ruleCost * SCALE, quantity)) : null,
+      cumulativeRealized: format(realized + distributions - otherCosts) });
+  }
+
+  let marketValue = quantity === 0n ? 0n : null;
+  if (quote !== null) {
+    if (!quote || !validDate(quote.date)) throw new Error('평가가격의 기준 날짜가 필요합니다.');
+    if (ordered.length && quote.date < ordered.at(-1).date) throw new Error('마지막 거래보다 오래된 평가가격입니다.');
+    const price = decimal(quote.price, '평가가격', false);
+    marketValue = divideRounded(quantity * price, SCALE);
+  }
+  const netRealized = realized + distributions - otherCosts;
+  const equity = marketValue === null ? null : cash + marketValue;
+  const unrealized = marketValue === null ? null : marketValue - cost;
+  const total = equity === null ? null : equity - funding;
+  if (total !== null && total !== netRealized + unrealized) throw new Error('손익 대사 오류입니다.');
+  return {
+    currency: 'USD', accountingMethod: 'weighted-average-inclusive-fees',
+    cash: format(cash), quantity: format(quantity), costBasis: format(cost),
+    averageCost: quantity ? format(divideRounded(cost * SCALE, quantity)) : null,
+    ruleAverage: quantity ? format(divideRounded(ruleCost * SCALE, quantity)) : null,
+    netFunding: format(funding), tradeRealized: format(realized),
+    realizedPnl: format(netRealized), distributions: format(distributions),
+    feesPaid: format(fees), taxesPaid: format(taxes),
+    marketValue: marketValue === null ? null : format(marketValue),
+    equity: equity === null ? null : format(equity),
+    unrealizedPnl: unrealized === null ? null : format(unrealized),
+    totalPnl: total === null ? null : format(total),
+    quoteDate: quote?.date ?? null, history
+  };
+}
+
+return { evaluateLedger };
+
+})();
+
+const cashTypes = new Set(['deposit','withdrawal','buy','sell','dividend','fee','tax']);
+const kinds = ['infinite-v4','vr5-basic'];
+const owners = ['남편','아내','공동','미지정'];
+const dateOK = s => typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s) && Number.isFinite(Date.parse(s)) && new Date(s).toISOString().slice(0,10) === s;
+const addDays = (a,n) => new Date(Date.parse(a)+86400000*n).toISOString().slice(0,10);
+function numeric(v,label,positive=false) {
+  if (typeof v!=='string' || !/^\d{1,12}(\.\d{1,8})?$/.test(v) || !Number.isFinite(Number(v)) || (positive && Number(v)<=0)) throw Error(label+' 값을 확인하세요.');
+  return Number(v);
+}
+const centsDown = n => Math.floor((n+1e-9)*100)/100;
+const centsNear = n => Math.round((n+1e-9)*100)/100;
+const gcd = (a,b) => b ? gcd(b,a%b) : a;
+function rational(n=0n,d=1n) {const g=gcd(n,d);return {n:n/g,d:d/g};}
+const plus = (a,b) => rational(a.n*b.d+b.n*a.d,a.d*b.d);
+const times = (a,n,d=1) => rational(a.n*BigInt(n),a.d*BigInt(d));
+const tNumber = t => Number(t.n*1000000000000n/t.d)/1e12;
+const tOver = (t,n) => t.n>BigInt(n)*t.d;
+function configOK(c) {
+  if (!c || typeof c.name!=='string' || !c.name.trim() || c.name.length>80 || !owners.includes(c.owner) || !kinds.includes(c.kind)) throw Error('전략 이름·소유자·종류를 확인하세요.');
+  if (c.kind==='infinite-v4' && (!['TQQQ','SOXL'].includes(c.symbol) || ![20,40].includes(c.splits))) throw Error('무한매수법은 TQQQ/SOXL의 20·40분할을 지원합니다.');
+  if (c.kind==='vr5-basic') {
+    if(c.symbol!=='TQQQ' || !['accumulate','hold','withdraw'].includes(c.style) || !Number.isInteger(c.g) || c.g<1 || c.g>1000) throw Error('VR 종목·방식·G를 확인하세요.');
+    numeric(c.initialV,'최초 V',true);
+  }
+  return c;
+}
+function validateRecords(records) {
+  if (!Array.isArray(records) || records.length>10000) throw Error('기록은 최대 10,000개입니다.');
+  const ids=new Set(),positions=new Set();
+  return records.map(r=>{
+    if(!r || typeof r.id!=='string' || !r.id || r.id.length>80 || ids.has(r.id) || !dateOK(r.date) || !Number.isInteger(r.sequence) || r.sequence<1 || r.sequence>100000 || ![...cashTypes,'settle','cycle'].includes(r.type)) throw Error('기록의 ID·날짜·순서·종류를 확인하세요.');
+    const pos=r.date+':'+r.sequence;if(positions.has(pos))throw Error('같은 날짜의 순서가 중복되었습니다.');
+    if(typeof r.memo!=='undefined' && (typeof r.memo!=='string'||r.memo.length>300))throw Error('메모는 300자 이내입니다.');
+    ids.add(r.id);positions.add(pos);return {...r};
+  }).sort((a,b)=>a.date.localeCompare(b.date)||a.sequence-b.sequence);
+}
+function evaluateStrategy(config,records,quote=null,accounted=null) {
+  const c=configOK(config),ordered=validateRecords(records),events=ordered.filter(r=>cashTypes.has(r.type));
+  // Validate the entire cash ledger first. Checkpoints never mint cash or erase losses.
+  const ledger=accounted?.full||evaluateLedger(events,quote);
+  const histories=new Map(ledger.history.map(h=>[h.id,h]));
+  let balance={cash:'0',quantity:'0',ruleAverage:null}, t=rational(),mode='normal',firstReverse=false,cycle=null;
+  let pending=[],settledDate=null,dayStart=null,cycleNo=1;
+  const settlements=[],cycles=[];
+  for(const r of ordered) {
+    if(cashTypes.has(r.type)) {
+      if(c.kind==='infinite-v4') {
+        if(settledDate && r.date<=settledDate)throw Error('하루 확정 뒤의 거래는 다음 날짜에 기록하세요. 같은 날 거래는 확정 기록 앞에 배치하세요.');
+        if((r.type==='deposit'||r.type==='withdrawal') && (Number(balance.quantity)>0 || pending.some(x=>['buy','sell'].includes(x.type))))throw Error('무한매수법 진행 중에는 외부 입출금을 넣을 수 없습니다.');
+        if(pending.length && pending[0].date!==r.date)throw Error('이전 날짜의 하루 결과를 먼저 확정하세요.');
+        if(['buy','sell'].includes(r.type)) {
+          if(!pending.length)dayStart={...balance};
+          pending.push(r);
+        }
+      } else if(cycle) {
+        if(r.date>=cycle.endDate)throw Error('2주가 지났습니다. 다음 사이클을 먼저 시작하세요.');
+        if(r.type==='deposit'||r.type==='withdrawal')throw Error('VR 시작 후 적립·인출은 사이클 전환에서 기록하세요.');
+        if(r.type==='buy')cycle.spent+=Number(r.quantity)*Number(r.price)+Number(r.fee||0);
+      }
+      balance=histories.get(r.id);
+      continue;
+    }
+    if(r.type==='settle') {
+      if(c.kind!=='infinite-v4')throw Error('VR에는 무한매수법 하루 확정을 넣을 수 없습니다.');
+      if(settledDate && r.date<=settledDate)throw Error('하루 확정 날짜가 중복되거나 역순입니다.');
+      if(pending.some(x=>x.date!==r.date))throw Error('거래 날짜와 하루 확정 날짜가 다릅니다.');
+      const close=numeric(r.close,'확정 종가',true);
+      if(!['0','0.5','1'].includes(r.buyFraction)||!['none','quarter','target','reverse'].includes(r.sellKind))throw Error('하루 매수·매도 결과를 선택하세요.');
+      const buys=pending.filter(x=>x.type==='buy'),sells=pending.filter(x=>x.type==='sell');
+      if(Boolean(buys.length)!==(r.buyFraction!=='0')||Boolean(sells.length)!==(r.sellKind!=='none'))throw Error('실제 체결 기록과 하루 매수·매도 결과가 다릅니다.');
+      if(buys.concat(sells).some(x=>!Number.isInteger(Number(x.quantity))))throw Error('주문 규칙은 정수 주식만 지원합니다.');
+      const beforeMode=mode,before=tNumber(t),beforeQ=Number(dayStart?.quantity??balance.quantity),sold=sells.reduce((s,x)=>s+Number(x.quantity),0);
+      if(mode==='normal') {
+        if(r.sellKind==='reverse')throw Error('일반모드에서는 리버스 매도를 선택할 수 없습니다.');
+        if(r.sellKind==='quarter') {
+          if(buys.length)throw Error('쿼터매도와 LOC 매수가 함께 체결된 날은 원본의 일반 처리 범위를 벗어납니다. 체결 내역을 확인하세요.');
+          if(sold!==Math.floor(beforeQ/4))throw Error('쿼터매도 수량이 보유수량의 1/4 내림과 다릅니다. 부분 체결일은 아직 확정하지 마세요.');
+          t=times(t,3,4);
+        }
+        if(r.sellKind==='target') {
+          if(Number(balance.quantity)>0 && !buys.length)throw Error('목표가 매도 후 잔여 보유가 있는 예외입니다. 원본 세칙 확인 전 자동 T 확정을 지원하지 않습니다.');
+          if(buys.length && sold!==beforeQ-Math.floor(beforeQ/4))throw Error('목표가 매도 후 재매수는 나머지 3/4 매도 체결을 확인해야 합니다.');
+          t=times(t,1,4);
+        }
+        if(r.buyFraction==='0.5' && ! (t.n*2n<BigInt(c.splits)*t.d))throw Error('후반전은 절반 매수로 확정할 수 없습니다. 부분 체결 여부를 확인하세요.');
+        t=plus(t,r.buyFraction==='1'?rational(1n):r.buyFraction==='0.5'?rational(1n,2n):rational());
+        if(tOver(t,c.splits-1)){mode='reverse';firstReverse=true;}
+      } else {
+        if(!['none','reverse'].includes(r.sellKind) || r.buyFraction==='0.5' || (buys.length&&sells.length))throw Error('리버스 하루 결과는 쿼터매수 또는 분할매도입니다.');
+        if(firstReverse && buys.length)throw Error('리버스 첫날은 매수 없이 MOC 매도만 합니다.');
+        if(firstReverse && !sells.length)throw Error('리버스 첫날 MOC 매도 체결을 기록한 뒤 확정하세요.');
+        if(sells.length) {
+          const divisor=c.splits===20?10:20;
+          if(sold!==Math.floor(beforeQ/divisor)||!sold)throw Error('리버스 매도 수량을 확인하세요. 부분 체결일은 아직 확정하지 마세요.');
+          t=times(t,divisor-1,divisor);firstReverse=false;
+        }
+        if(buys.length)t=plus(times(t,3,4),rational(BigInt(c.splits),4n));
+        const avg=r.brokerAverage?numeric(r.brokerAverage,'증권사 평단',true):Number(balance.ruleAverage);
+        if(Number(balance.quantity)>0 && close>avg*(c.symbol==='TQQQ'?.85:.8)){mode='normal';firstReverse=false;}
+      }
+      if(Number(balance.quantity)===0 && (buys.length||sells.length)){t=rational();mode='normal';firstReverse=false;cycleNo++;}
+      settlements.push({date:r.date,beforeT:before,t:tNumber(t),mode,beforeMode,cycleNo,cash:balance.cash});
+      settledDate=r.date;pending=[];dayStart=null;
+    }
+    if(r.type==='cycle') {
+      if(c.kind!=='vr5-basic')throw Error('무한매수법에는 VR 사이클을 넣을 수 없습니다.');
+      if(cycle && r.date!==cycle.endDate)throw Error('다음 VR 사이클은 이전 시작일의 14일 뒤입니다. 누락된 사이클을 순서대로 기록하세요.');
+      if(!Number.isInteger(r.g)||r.g<1||r.g>1000)throw Error('G는 1~1000 정수입니다.');
+      const add=numeric(r.contribution,'적립금'),take=numeric(r.withdrawal,'인출금');
+      if(add&&take)throw Error('같은 사이클의 적립과 인출 중 하나만 입력하세요.');
+      if((c.style==='hold'&&(add||take))||(c.style==='accumulate'&&take)||(c.style==='withdraw'&&add))throw Error('전략의 적립·거치·인출 방식과 금액이 다릅니다.');
+      const pool=Number(balance.cash),v=cycle?cycle.v+pool/r.g+add-take:Number(c.initialV);
+      if(!cycle && (add||take))throw Error('최초 사이클은 시작 자금과 초기 매수를 먼저 기록하고 적립·인출은 0으로 시작하세요.');
+      if(v<=0||pool+add<take||!Number.isFinite(v))throw Error('인출 후 V 또는 잔금이 부족합니다.');
+      if(Number(balance.quantity)===0)throw Error('VR 최초 매수 또는 보유수량을 먼저 기록하세요.');
+      // Cash flows are ledger events generated atomically by the caller before replay.
+      // Cycle contribution/withdrawal affects cash via these synthetic entries, once only.
+      const rate={accumulate:.75,hold:.5,withdraw:.25}[c.style];
+      cycle={id:r.id,date:r.date,endDate:addDays(r.date,14),v,g:r.g,poolBefore:pool,poolStart:pool+add-take,limit:(pool+add-take)*rate,spent:0,contribution:add,withdrawal:take};
+      cycles.push(cycle);
+      balance={...balance,cash:String(pool+add-take)};
+    }
+  }
+  return {ledger,t:tNumber(t),tExact:{numerator:t.n.toString(),denominator:t.d.toString()},mode,firstReverse,cycleNo,settlements,cycles,cycle,pending:pending.filter(x=>['buy','sell'].includes(x.type)).length>0,settledDate};
+}
+
+// Expand cycle cash flows for accounting; retain command order for strategy replay.
+// Internal cash flow IDs cannot collide with client-record IDs.
+function evaluateBook(book) {
+  if(!book || !book.config)throw Error('전략 설정이 필요합니다.');
+  const original=validateRecords(book.records),expanded=[];
+  if(book.quote && original.length && book.quote.date<original.at(-1).date)throw Error('평가가격은 마지막 기록 날짜 이후여야 합니다.');
+  for(const r of original) {
+    if(r.id.startsWith('flow:') || Object.hasOwn(r,'internal'))throw Error('예약된 기록 필드입니다.');
+    if(['buy','sell'].includes(r.type)) {
+      numeric(r.quantity,'체결 수량',true);numeric(r.price,'체결 가격',true);numeric(r.fee||'0','수수료');
+    } else if(cashTypes.has(r.type))numeric(r.amount,'금액',true);
+    if(r.type==='cycle') {
+      numeric(r.contribution,'적립금');numeric(r.withdrawal,'인출금');
+      const amount=Number(r.contribution)?r.contribution:r.withdrawal;
+      expanded.push({...r});
+      if(Number(amount))expanded.push({id:'flow:'+r.id,date:r.date,sequence:r.sequence,type:Number(r.contribution)?'deposit':'withdrawal',amount,currency:'USD',internal:true});
+    } else expanded.push({...r});
+  }
+  // Use spaced ordering for generated cash entries without conflicting source sequences.
+  expanded.forEach((r,i)=>r.sequence=i+1);
+  const cashEvents=expanded.filter(r=>cashTypes.has(r.type));
+  const full=evaluateLedger(cashEvents,book.quote||null);
+  // Replay core with no command flows, providing flow-adjusted ledger history.
+  const result=evaluateWithFlows(book.config,expanded,full,book.quote||null);
+  result.ledger=full;return result;
+}
+function evaluateWithFlows(c,expanded,full,quote) {
+  // A local adapter lets the common replay use the exact ledger containing cycle flows.
+  // Generated flow records bypass the external-deposit restriction; their cash was applied at the command.
+  const source=expanded.filter(r=>!r.internal);
+  return evaluateStrategy(c,source,quote,{full});
+}
+
+function ladder(budget,base,limit=80) {
+  const rows=[];budget=centsDown(budget);base=centsDown(base);
+  if(base<=0||budget<=0)return rows;
+  let n=Math.floor((budget+1e-9)/base);
+  if(n)rows.push({side:'buy',type:'LOC',price:base,quantity:n});
+  for(let i=0;i<limit-1;i++) {
+    n++;const p=centsDown(budget/n);if(p<=0)break;
+    const last=rows.at(-1);if(last?.price===p)last.quantity++;else rows.push({side:'buy',type:'LOC',price:p,quantity:1});
+  }
+  return rows;
+}
+function orderPlan(book,input={}) {
+  const state=evaluateBook(book),c=book.config,l=state.ledger;
+  const on=input.date;if(!dateOK(on))throw Error('주문 기준 날짜를 입력하세요.');
+  const last=validateRecords(book.records).at(-1);
+  if(last && on<last.date)throw Error('마지막 기록보다 이전 날짜로 주문표를 만들 수 없습니다.');
+  const cash=Number(l.cash),q=Number(l.quantity),avg=input.brokerAverage?numeric(input.brokerAverage,'증권사 평단',true):Number(l.ruleAverage);
+  if(!Number.isSafeInteger(Math.round(cash*100)))throw Error('주문표 계산 가능한 금액 범위를 초과했습니다.');
+  const reserve=numeric(input.reserve||'0','수수료 여유액');
+  if(!Number.isSafeInteger(q))throw Error('주문표는 정수 주식만 지원합니다.');
+  let rows=[],budget=0,notes=[],star=null,phase=state.mode;
+  if(c.kind==='vr5-basic') {
+    const cy=state.cycle;if(!cy)throw Error('먼저 VR 최초 사이클을 시작하세요.');
+    if(q===0)throw Error('VR 보유수량이 0주인 경우의 재시작 세칙을 확인해야 합니다.');
+    if(on>=cy.endDate)throw Error('다음 VR 사이클을 먼저 시작하세요.');
+    const lower=cy.v*.85,upper=cy.v*1.15;
+    budget=centsDown(Math.max(0,Math.min(cash,cy.limit-cy.spent)-reserve));
+    let spent=0;
+    for(let i=0;i<80;i++) {
+      const price=centsDown(lower/(q+i));if(!Number.isFinite(price)||price<=0||spent+price>budget+1e-8)break;
+      rows.push({side:'buy',type:'LOC',price,quantity:1});spent+=price;
+    }
+    for(let i=0;i<Math.min(q,80);i++)rows.push({side:'sell',type:'LOC',price:Math.ceil((upper/(q-i)-1e-9)*100)/100,quantity:1});
+    notes.push('매수 가격은 하단/매수 전 수량을 센트 내림, 매도 가격은 상단/매도 전 수량을 센트 올림합니다.','사이클 한도는 매수 수수료를 포함해 사용하며 매도대금으로 재충전하지 않습니다.','매수·매도 각각 최대 80단계이며 일부 주문표만 표시될 수 있습니다.');
+    return {state,rows,budget,lower,upper,notes,phase:'VR5.0',limited:true};
+  }
+  if(state.pending)throw Error('체결 내역의 하루 결과를 먼저 확정하세요.');
+  if(state.settledDate && on<=state.settledDate)throw Error('확정한 종가 다음 거래일의 주문 날짜를 입력하세요.');
+  if(q===0) {
+    const base=numeric(input.initialLimit,'첫 매수 LOC 가격',true);
+    budget=centsDown(Math.max(0,cash/c.splits-reserve));rows=ladder(budget,base);
+    notes.push('첫 매수 LOC 가격은 증권사 주문 가능 범위를 확인해 직접 입력합니다.');
+  } else if(state.mode==='normal') {
+    const max=c.symbol==='TQQQ'?15:20;
+    star=centsNear(avg*(1+(max-2*max*state.t/c.splits)/100));
+    budget=centsDown(Math.max(0,cash/(c.splits-state.t)-reserve));
+    if(state.t<c.splits/2) {
+      phase='전반';
+      // Whole-budget ladder subject to the half-budget cap above the average.
+      const high=centsDown(star-.01),low=centsDown(avg),half=centsDown(budget/2);
+      if(high>low && high>0 && half>=high)rows.push({side:'buy',type:'LOC',price:high,quantity:Math.floor(half/high)});
+      const highQty=rows.reduce((s,r)=>s+r.quantity,0),lowQty=Math.max(0,Math.floor(budget/low)-highQty);
+      if(low>0 && lowQty)rows.push({side:'buy',type:'LOC',price:low,quantity:lowQty});
+      let n=highQty+lowQty;
+      if(low>0)for(let i=0;i<78;i++){n++;const p=centsDown(budget/n);if(p<=0)break;rows.push({side:'buy',type:'LOC',price:Math.min(p,low),quantity:1});}
+      notes.push('전반 주문표는 평단 위에서 절반 예산, 평단 이하에서 전체 예산을 넘지 않도록 정수 수량을 배분합니다.');
+    } else {phase='후반';rows=ladder(budget,star-.01);}
+    const quarter=Math.floor(q/4);
+    if(quarter)rows.push({side:'sell',type:'LOC',price:star,quantity:quarter});
+    rows.push({side:'sell',type:'LIMIT',price:centsNear(avg*(1+max/100)),quantity:q-quarter});
+  } else {
+    const divisor=c.splits===20?10:20,qty=Math.floor(q/divisor);
+    if(!qty)throw Error('리버스 매도 수량이 0주입니다. 소량 보유 세칙 확인이 필요합니다.');
+    if(state.firstReverse)rows.push({side:'sell',type:'MOC',price:null,quantity:qty});
+    else {
+      const closes=input.closes;
+      if(!Array.isArray(closes)||closes.length!==5)throw Error('직전 5거래일 종가 5개가 필요합니다.');
+      const sorted=closes.slice().sort((a,b)=>a.date.localeCompare(b.date));
+      if(new Set(sorted.map(r=>r.date)).size!==5 || sorted.some(r=>!dateOK(r.date)||r.date>=on))throw Error('종가는 서로 다른 이전 거래일 5개를 입력하세요.');
+      star=centsNear(sorted.reduce((s,r)=>s+numeric(r.price,'종가',true),0)/5);
+      budget=centsDown(Math.max(0,cash/4-reserve));
+      if(cash/4<star-.01)rows.push({side:'sell',type:'MOC',price:null,quantity:qty});
+      else {rows=ladder(budget,star-.01);rows.push({side:'sell',type:'LOC',price:star,quantity:qty});}
+      notes.push('입력한 날짜가 실제 직전 5거래일인지 확인하세요. 미국 휴장일은 자동 조회하지 않습니다.');
+    }
+  }
+  if(rows.some(r=>r.price!==null && (!Number.isFinite(r.price)||r.price<=0)))throw Error('계산된 주문 가격이 0 이하입니다. 입력값을 확인하세요.');
+  notes.push('LOC는 조건 충족 시 실제 종가에 체결됩니다. 표의 모든 주문이 각 지정 가격에 체결된다고 계산하지 않습니다.','표는 최대 약 80단계입니다. 깊은 하락에서는 추가 주문표가 필요할 수 있습니다.');
+  return {state,rows,budget,star,phase,notes,limited:true};
+}
+return {evaluateBook,orderPlan,configOK,validateRecords,addDays};
+
+})();
+  let strategyId='',strategyPage=0,strategyArchived=false,strategyHistoryLimit=10;
+  const strategyToday=()=>{const p=Object.fromEntries(new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date()).map(x=>[x.type,x.value]));return `${p.year}-${p.month}-${p.day}`;};
+  const strategyTypes={deposit:'입금',withdrawal:'출금',buy:'매수',sell:'매도',dividend:'배당',fee:'수수료',tax:'납부 세금',settle:'하루 확정',cycle:'VR 사이클'};
+  const strategyUSD=n=>n===null||n===undefined?'—':'$'+Number(n).toLocaleString(appearance.language==='ja'?'ja-JP':'ko-KR',{maximumFractionDigits:2,minimumFractionDigits:2});
+  const strategyRow=id=>(data.strategy_books||[]).find(r=>r.id===id);
+  const strategyClone=x=>JSON.parse(JSON.stringify(x));
+  const strategyDateField=(name,label,value=strategyToday())=>field(name,label,value,'date','required');
+  const strategyDecimal=(name,label,value='',required=true)=>field(name,label,value,'text',`inputmode="decimal" autocomplete="off" maxlength="22" ${required?'required':''}`);
+  function strategyRows(){return(data.strategy_books||[]).filter(r=>Boolean(r.document.config.archived)===strategyArchived&&(assetOwnerFilter==='all'||r.document.config.owner===assetOwnerFilter));}
+  function strategyMarket() {
+    const locale=appearance.language==='ja'?'ja':'kr';
+    const config={symbols:[['TQQQ','NASDAQ:TQQQ|1D'],['SOXL','AMEX:SOXL|1D']],chartOnly:false,width:'100%',height:430,locale,colorTheme:'light',autosize:false,showVolume:false,showMA:false,hideDateRanges:false,hideMarketStatus:false,hideSymbolLogo:false,scalePosition:'right',scaleMode:'Normal',fontFamily:'Arial, sans-serif',fontSize:'12',noTimeScale:false,valuesTracking:'1',changeMode:'price-and-percent',chartType:'area',lineWidth:2,lineType:0,dateRanges:['1d|1','1m|30','3m|60','12m|1D','all|1W']};
+    // Isolated public market widget: no account balances, tokens, or records enter this frame.
+    const source='https://www.tradingview-widget.com/embed-widget/symbol-overview/?locale='+locale+'#'+encodeURIComponent(JSON.stringify(config));
+    const d=$('#editor');d.innerHTML=`<h2>TQQQ · SOXL <span>시세·차트</span></h2><p>출처: TradingView · USD</p><p>제공처에 따라 지연될 수 있습니다. 차트의 거래 시간과 시장 상태를 확인하세요.</p><iframe class="oh-strategy-market" title="TQQQ / SOXL TradingView" sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox" referrerpolicy="no-referrer" src="${esc(source)}"></iframe><p><a href="https://www.tradingview.com/" target="_blank" rel="noopener noreferrer">Track all markets on TradingView</a></p><p>화면이 표시되지 않으면 아래 종목 페이지에서 확인하세요.</p><div class="oh-strategy-tools"><a href="https://www.tradingview.com/symbols/NASDAQ-TQQQ/" target="_blank" rel="noopener noreferrer">TQQQ ↗</a><a href="https://www.tradingview.com/symbols/AMEX-SOXL/" target="_blank" rel="noopener noreferrer">SOXL ↗</a>${btn('close','닫기')}</div><p>이 화면의 가격은 확인용입니다. 평가가격·확정 종가·체결 기록에 자동으로 저장되지 않습니다.</p>`;d.showModal();
+  }
+  function strategyChart(points,label) {
+    if(points.length<2)return '<p>기록이 두 개 이상 쌓이면 추이를 표시합니다.</p>';
+    points=points.slice(-30);const values=points.map(p=>p.value),lo=Math.min(0,...values),hi=Math.max(0,...values),range=hi-lo||1;
+    const xy=points.map((p,i)=>`${30+i*540/(points.length-1)},${145-(p.value-lo)/range*115}`).join(' ');
+    return `<figure class="oh-strategy-chart"><figcaption>${esc(label)}</figcaption><svg viewBox="0 0 600 185" role="img" aria-label="${esc(translateText(label))}"><line x1="30" y1="${145-(0-lo)/range*115}" x2="570" y2="${145-(0-lo)/range*115}" stroke="currentColor" opacity=".2"/><polyline points="${xy}" fill="none" stroke="var(--oh-button,#176950)" stroke-width="3"/><text x="30" y="18" fill="currentColor" font-size="12">${esc(strategyUSD(hi))}</text><text x="30" y="177" fill="currentColor" font-size="12">${esc(points[0].date)}</text><text x="570" y="177" text-anchor="end" fill="currentColor" font-size="12">${esc(points.at(-1).date)}</text></svg><p>${esc(strategyUSD(points.at(-1).value))}</p></figure>`;
+  }
+  function strategyView() {
+    const books=strategyRows();if(!books.some(r=>r.id===strategyId)){strategyId=books[0]?.id||'';strategyPage=0;}
+    let total=0,cash=0,missing=0,failed=0;const summaries=new Map();
+    for(const r of books){try{const s=StrategyEngine.evaluateBook(r.document);summaries.set(r.id,s);cash+=Number(s.ledger.cash);if(s.ledger.equity===null)missing++;else total+=Number(s.ledger.equity);}catch(e){summaries.set(r.id,{error:e.message});missing++;failed++;}}
+    const r=strategyRow(strategyId),s=summaries.get(strategyId),c=r?.document.config;
+    return `<section class="oh-asset-heading"><div><small>OUR HOME · STRATEGIES</small><h2>전략 투자</h2></div><div>${btn('strategy-new','전략 만들기')}${btn('strategy-import','전략 가져오기')}</div></section>
+    <section class="card"><div class="oh-asset-heading"><div><h3>TQQQ · SOXL <span>주가 확인</span></h3><p>TradingView · USD · 지연 가능</p></div>${btn('strategy-market','시세·차트 열기')}</div><p><a href="http://127.0.0.1:8766/" target="_blank" rel="noopener noreferrer">토스 PC 시세 열기 ↗</a></p><p>이 PC에서 연결 프로그램을 실행한 뒤 이용하세요. 토스 현재가는 5초 간격으로 조회합니다.</p></section>
+    <div class="oh-asset-filters">${['all',...assetOwners].map(o=>`<button type="button" data-action="asset-filter" data-id="${esc(o)}" aria-pressed="${assetOwnerFilter===o}">${o==='all'?'합계':o}</button>`).join('')}</div>
+    <p>USD 보조 원장입니다. 기존 자산 계좌 금액에 다시 합산하지 않습니다.</p>
+    <div class="oh-strategy-metrics"><article><small>등록 전략 평가액 합계</small><strong>${missing?'—':strategyUSD(total)}</strong><span>${missing?'평가가격 또는 기록 확인 필요':'입력한 평가가격 기준'}</span></article><article><small>등록 전략 현금 합계</small><strong>${failed?'—':strategyUSD(cash)}</strong><span>생활비·비상금과 구분하세요.</span></article></div>
+    <div class="oh-strategy-tools">${btn('strategy-archived',strategyArchived?'진행 전략 보기':'보관 전략 보기')}<span>${books.length}</span></div>
+    <div class="oh-strategy-pills">${books.map(x=>`<button type="button" data-action="strategy-select" data-id="${esc(x.id)}" aria-pressed="${x.id===strategyId}">${userText(x.document.config.name)} <small>${esc(x.document.config.symbol)}</small></button>`).join('')}</div>
+    ${!r?'<section class="card"><h3>첫 전략을 기록해 보세요.</h3><p>전략을 만든 뒤 최초 입금부터 실제 체결을 순서대로 입력하세요.</p><p>기존 보유분을 시작할 때는 과거 거래를 기록해야 전체 손익이 맞습니다.</p></section>':s?.error?`<section class="card"><p role="alert">${esc(s.error)}</p>${btn('strategy-records','기록 확인',r.id)}${btn('strategy-export','전략 백업',r.id)}</section>`:strategyDetail(r,s)}
+    <section class="card"><details data-asset-detail="strategy-help"><summary>계산과 기록 안내</summary><p>무한매수법 V4.0은 20·40분할, VR5.0은 기본공식을 지원합니다.</p><p>주문표는 확인용 계산입니다. 증권사에 주문을 전송하지 않습니다.</p><p>V와 밴드는 매매 기준이며 수익이나 손실 한도가 아닙니다.</p><p>손익 평단은 매수 수수료를 포함하고, 주문 규칙 평단은 수수료를 제외합니다. 증권사 평단과 대조하세요.</p><p>두 전략을 함께 운용해도 같은 종목의 위험은 겹칩니다. 위 합계는 등록한 전략만 포함합니다.</p><p>시세·차트는 외부 제공 화면입니다. 손익에는 직접 저장한 평가가격을 사용합니다. 원화 환산·세금 추정·주식분할 자동 처리는 지원하지 않습니다.</p></details></section>`;
+  }
+  function strategyDetail(row,s) {
+    const d=row.document,c=d.config,l=s.ledger,cy=s.cycle,account=(data.accounts||[]).find(a=>a.id===c.accountId);
+    const metrics=[['현금 Pool',l.cash],['주식 평가액',l.marketValue],['누적 실현손익',l.realizedPnl],['평가손익',l.unrealizedPnl],['누적 순입금',l.netFunding],['총손익',l.totalPnl]];
+    return `<section class="card"><div class="oh-asset-heading"><div><h2>${userText(c.name)}</h2><p>${esc(c.symbol)} · ${esc(c.owner)} · ${c.kind==='infinite-v4'?'V4.0 · '+c.splits:'VR5.0 · '+translateText('기본공식')}</p></div>${btn('strategy-config','전략 정보',row.id)}</div>
+    <p><span>연결 계좌</span>: ${account?userText(account.name):'—'} · <span>잔액은 자동 변경하지 않습니다.</span></p>
+    <div class="oh-strategy-metrics">${metrics.map(([label,value])=>`<article><small>${label}</small><strong>${strategyUSD(value)}</strong></article>`).join('')}</div>
+    <p><span>보유수량</span>: ${esc(l.quantity)} · <span>손익 평단</span>: ${strategyUSD(l.averageCost)} · <span>규칙 평단</span>: ${strategyUSD(l.ruleAverage)}</p>
+    <p><span>평가가격 기준일</span>: ${esc(l.quoteDate||'—')} · <span>직접 입력한 가격입니다.</span></p>
+    <div class="oh-strategy-workflow"><h3>이렇게 사용하세요</h3><ol><li><strong>주문 전</strong><p>현재 기록으로 매수·매도 가격과 수량을 계산하고 증권사에서 주문하세요.</p>${btn('strategy-plan','주문 가격·수량 보기',row.id)}</li><li><strong>체결 후</strong><p>증권사에서 실제로 체결된 수량·가격·수수료를 기록하세요.</p>${btn('strategy-event','체결·입출금 기록',row.id)}</li><li><strong>${c.kind==='infinite-v4'?'장 마감 후':'2주마다'}</strong><p>${c.kind==='infinite-v4'?'그날 체결을 모두 기록한 뒤 T값과 다음 매매 단계를 갱신합니다.':'새 사이클의 V·밴드·매수 한도를 갱신합니다. 매일 확정할 필요는 없습니다.'}</p>${btn(c.kind==='infinite-v4'?'strategy-settle':'strategy-cycle',c.kind==='infinite-v4'?'오늘 체결 마감 · T값 갱신':'2주 사이클 시작·갱신',row.id)}</li></ol><p>처음에는 입금부터 기록하세요. 주문표를 보는 것만으로 잔금이나 보유수량이 바뀌지 않습니다.</p></div>
+    <div class="oh-strategy-tools">${btn('strategy-quote','손익 계산용 평가가격 입력',row.id)}</div>
+    ${c.kind==='infinite-v4'?`<div class="oh-strategy-state"><strong>${s.mode==='reverse'?'리버스모드':'일반모드'}</strong><p>T ${s.t.toLocaleString('en-US',{maximumFractionDigits:10})} · <span>사이클</span> ${s.cycleNo}</p><p>${s.pending?'미확정 체결이 있습니다. 장 마감 후 T값을 갱신하세요.':'체결 마감으로 T값을 갱신한 뒤 다음 거래일 주문표를 계산합니다.'}</p>${s.firstReverse?'<p>리버스 첫날은 MOC 매도만 진행합니다.</p>':''}</div>`:cy?`<div class="oh-strategy-state"><strong>V ${strategyUSD(cy.v)} · G ${cy.g}</strong><p>${esc(cy.date)} → ${esc(cy.endDate)}</p><p><span>밴드</span>: ${strategyUSD(cy.v*.85)} ~ ${strategyUSD(cy.v*1.15)}</p><p><span>사이클 매수 한도</span>: ${strategyUSD(cy.limit)} · <span>남은 한도</span>: ${strategyUSD(Math.max(0,cy.limit-cy.spent))}</p>${cy.spent>cy.limit?'<p role="alert">실제 매수액이 사이클 한도를 초과했습니다.</p>':''}</div>`:'<p>초기 입금과 매수를 기록한 뒤 최초 사이클을 시작하세요.</p>'}
+    ${strategyChart(l.history.map(h=>({date:h.date,value:Number(h.cumulativeRealized)})),'누적 실현손익 추이')}
+    ${c.kind==='vr5-basic'?strategyChart(s.cycles.map(x=>({date:x.date,value:x.v})),'V 기준값 추이'):''}
+    ${strategyChangeHistory(row)}
+    <div>${btn('strategy-records','전체 기록',row.id)}${btn('strategy-export','전략 백업',row.id)}${btn('strategy-archive',c.archived?'보관 해제':'전략 보관',row.id)}</div></section>`;
+  }
+  function strategyChangeHistory(row) {
+    const all=(data.strategy_book_changes||[]).filter(x=>x.book_id===row.id).sort((a,b)=>b.revision-a.revision),changes=all.slice(0,strategyHistoryLimit);
+    return `<details data-asset-detail="strategy-history"><summary>최근 전략 변경이력</summary>${changes.map(x=>`<article class="oh-strategy-record"><p>${esc(new Date(x.created_at).toLocaleString(appearance.language==='ja'?'ja-JP':'ko-KR'))} · ${userText((data.household_members||[]).find(m=>m.user_id===x.actor_id)?.display_name||'구성원')} · #${x.revision}</p><p><span>변경된 기록</span>: ${x.changed_records.length}</p>${x.changed_records.map((r,i)=>!r.after&&r.before?`<p>${esc(r.before.date)} · ${esc(strategyTypes[r.before.type]||'기록')} ${btn('strategy-restore-record','삭제 기록 복구',JSON.stringify({changeId:x.id,index:i}))}</p>`:'').join('')}</article>`).join('')||'<p>변경이력이 없습니다.</p>'}${all.length>changes.length?btn('strategy-more-history','이전 변경이력 보기',row.id):''}</details>`;
+  }
+  function strategyForm(title,kind,row,body,id='') {
+    const d=$('#editor');d.innerHTML=`<h2>${title}</h2><form data-form="${kind}" data-id="${esc(id)}">${body}<div class="oh-strategy-tools"><button>${kind==='strategy-plan'?'계산':'저장'}</button>${btn('close','취소')}</div></form><div id="strategy-result" aria-live="polite"></div>`;
+    const form=d.querySelector('form');form.strategyBase=row?strategyClone(row):null;d.showModal();return form;
+  }
+  function strategyNew(row=null) {
+    const c=row?.document.config||{name:'',kind:'infinite-v4',symbol:'TQQQ',owner:'공동',splits:40,style:'accumulate',g:10,initialV:''};
+    const locked=Boolean(row?.document.records.length);
+    const form=strategyForm('전략 정보','strategy-config',row,field('name','전략 이름',c.name,'text','required maxlength="80"')+select('owner','소유자',assetOwners.map(x=>[x,x]),c.owner)+select('accountId','연결 계좌',[['','연결 안 함'],...(data.accounts||[]).filter(a=>a.kind==='asset').map(a=>[a.id,a.name])],c.accountId||'')+
+      `<fieldset ${locked?'disabled':''}>${select('kind','전략 종류',[['infinite-v4','무한매수법 V4.0'],['vr5-basic','VR5.0 기본공식']],c.kind)}${select('symbol','종목',[['TQQQ','TQQQ'],['SOXL','SOXL']],c.symbol)}<div data-strategy-kind="infinite-v4">${select('splits','분할수',[[20,'20'],[40,'40']],c.splits)}</div><div data-strategy-kind="vr5-basic">${select('style','운용 방식',[['accumulate','적립식'],['hold','거치식'],['withdraw','인출식']],c.style)}${field('g','시작 G',c.g,'number','required min="1" max="1000" step="1"')}${strategyDecimal('initialV','최초 V (USD)',c.initialV)}</div></fieldset><p>거래 기록이 생기면 공식과 초기 설정은 고정됩니다.</p>`);
+    strategyToggle(form);
+  }
+  function strategyToggle(form,changedName='') {
+    if(form.dataset.form==='strategy-config') {
+      const k=form.elements.kind.value;
+      for(const box of form.querySelectorAll('[data-strategy-kind]')){box.hidden=box.dataset.strategyKind!==k;for(const el of box.querySelectorAll('input,select'))el.disabled=box.hidden;}
+      if(k==='vr5-basic')form.elements.symbol.value='TQQQ';
+      if(changedName==='style'&&!form.strategyBase?.document.records.length)form.elements.g.value=form.elements.style.value==='withdraw'?'20':'10';
+    }
+    if(form.dataset.form==='strategy-event') {
+      const trade=['buy','sell'].includes(form.elements.type.value);
+      for(const box of form.querySelectorAll('[data-trade]')){box.hidden=(box.dataset.trade==='yes')!==trade;for(const el of box.querySelectorAll('input'))el.disabled=box.hidden;}
+    }
+  }
+  function strategyEvent(row,id='') {
+    const r=row.document.records.find(x=>x.id===id)||{},date=r.date||strategyToday();
+    const seq=r.sequence||Math.max(0,...row.document.records.filter(x=>x.date===date).map(x=>x.sequence))+1;
+    const f=strategyForm('체결·입출금 기록','strategy-event',row,strategyDateField('date','거래 날짜',date)+field('sequence','같은 날 순서',seq,'number','required min="1" max="100000" step="1"')+select('type','기록 종류',Object.entries(strategyTypes).filter(([k])=>!['settle','cycle'].includes(k)),r.type||'buy')+
+      `<div data-trade="yes">${strategyDecimal('quantity','체결 수량',r.quantity)}${strategyDecimal('price','체결 가격 (USD)',r.price)}${strategyDecimal('fee','수수료 (USD)',r.fee||'0')}</div><div data-trade="no">${strategyDecimal('amount','금액 (USD)',r.amount)}</div>${field('memo','메모',r.memo||'','text','maxlength="300"')}<p>거래 날짜는 미국 거래일을 입력합니다.</p><p>실제 체결 가격과 수수료를 입력하세요. 주문표 가격은 체결 가격이 아닙니다.</p><p>새 기록이 평가일보다 늦으면 평가가격을 다시 입력해야 합니다.</p>`,id);strategyToggle(f);
+  }
+  function strategySettle(row,id='') {
+    const r=row.document.records.find(x=>x.id===id)||{},s=StrategyEngine.evaluateBook(row.document),last=row.document.records.slice().sort((a,b)=>a.date.localeCompare(b.date)||a.sequence-b.sequence).at(-1);
+    const date=r.date||(s.pending?last?.date:strategyToday())||strategyToday(),seq=r.sequence||Math.max(0,...row.document.records.filter(x=>x.date===date).map(x=>x.sequence))+1;
+    strategyForm('오늘 체결 마감 · T값 갱신','strategy-settle',row,'<p>미국 장 마감 후 사용하는 기능입니다. 이미 입력한 체결을 기준으로 T값·일반/리버스모드·사이클을 갱신합니다.</p><p>예: 일반모드에서 하루 전체 예산을 매수하면 T가 1 증가합니다. 체결 건수만큼 증가하지 않습니다.</p><p>아래 선택은 체결 기록을 대신하지 않습니다. 실제 매수·매도 기록을 먼저 입력하세요.</p>'+strategyDateField('date','미국 거래일',date)+field('sequence','같은 날 순서',seq,'number','required min="1" max="100000"')+select('buyFraction','하루 매수 결과',[['0','매수 없음'],['0.5','절반 예산 매수'],['1',s.mode==='reverse'?'쿼터매수':'전체 예산 매수']],r.buyFraction||'0')+select('sellKind','하루 매도 결과',[['none','매도 없음'],['quarter','쿼터매도'],['target','목표가 매도·전량 매도'],['reverse','리버스 분할매도']],r.sellKind||'none')+strategyDecimal('close','확정 종가 (USD)',r.close)+strategyDecimal('brokerAverage','증권사 평단 (선택)',r.brokerAverage||'',false)+`<p>같은 날 모든 체결을 입력한 뒤 한 번만 확정하세요. 부분 체결로 결과를 판단할 수 없으면 확정을 보류하세요.</p><p>목표가 매도 후 LOC 재매수도 같은 날 결과에 포함하세요.</p>`,id);
+  }
+  function strategyCycle(row,id='') {
+    const r=row.document.records.find(x=>x.id===id)||{},s=StrategyEngine.evaluateBook(row.document),date=r.date||s.cycle?.endDate||strategyToday();
+    const seq=r.sequence||Math.max(0,...row.document.records.filter(x=>x.date===date).map(x=>x.sequence))+1;
+    strategyForm('사이클 시작','strategy-cycle',row,strategyDateField('date','사이클 시작일',date)+field('sequence','같은 날 순서',seq,'number','required min="1" max="100000"')+field('g','이번 사이클 G',r.g||s.cycle?.g||row.document.config.g,'number','required min="1" max="1000" step="1"')+strategyDecimal('contribution','적립금 (USD)',r.contribution||'0')+strategyDecimal('withdrawal','인출금 (USD)',r.withdrawal||'0')+'<p>적립·인출은 여기에서 한 번만 입력하세요. 현금과 V에 함께 반영됩니다.</p><p>최초 사이클은 입금·초기 매수를 먼저 기록하고 적립·인출 0으로 시작합니다.</p>',id);
+  }
+  function strategyRecords(row) {
+    const sorted=row.document.records.slice().sort((a,b)=>b.date.localeCompare(a.date)||b.sequence-a.sequence),pages=Math.max(1,Math.ceil(sorted.length/30));strategyPage=Math.min(strategyPage,pages-1);
+    const d=$('#editor');d.innerHTML=`<h2>전체 기록</h2><p>${strategyPage+1} / ${pages}</p><div class="oh-strategy-tools">${strategyPage?btn('strategy-prev','이전 기록',row.id):''}${strategyPage+1<pages?btn('strategy-next','다음 기록',row.id):''}${btn('close','닫기')}</div>${sorted.slice(strategyPage*30,(strategyPage+1)*30).map(x=>`<article class="oh-strategy-record"><strong>${esc(x.date)} · ${x.sequence} · ${strategyTypes[x.type]}</strong><p>${['buy','sell'].includes(x.type)?esc(x.quantity)+' × '+strategyUSD(x.price):x.type==='cycle'?'G '+x.g+' · +'+strategyUSD(x.contribution)+' / −'+strategyUSD(x.withdrawal):x.type==='settle'?strategyUSD(x.close):strategyUSD(x.amount)}</p><p>${userText(x.memo||'')}</p>${btn('strategy-edit','수정',x.id)}${btn('strategy-remove','기록 삭제',x.id)}</article>`).join('')||'<p>기록이 없습니다.</p>'}`;d.strategyBase=strategyClone(row);d.showModal();
+  }
+  function strategyPlan(row) {
+    const s=StrategyEngine.evaluateBook(row.document),c=row.document.config;
+    const dates=row.document.records.filter(x=>x.type==='settle').slice().sort((a,b)=>b.date.localeCompare(a.date)).slice(0,5).reverse().map(x=>x.date+' '+x.close).join('\n');
+    const f=strategyForm('주문 가격·수량 보기','strategy-plan',row,'<p>증권사에 입력할 주문 가격·수량·방식을 미리 계산합니다. 계산만으로 주문되거나 체결 기록이 생기지는 않습니다.</p><p>무한매수는 직전 거래일의 체결 마감을, VR은 현재 2주 사이클을 먼저 확인하세요.</p>'+strategyDateField('date','주문 기준 날짜',strategyToday())+strategyDecimal('reserve','수수료 여유액 (USD)','0')+(c.kind==='infinite-v4'?strategyDecimal('brokerAverage','규칙 평단 (선택)',s.ledger.ruleAverage||'',false)+(Number(s.ledger.quantity)===0?strategyDecimal('initialLimit','첫 매수 LOC 가격 (USD)'):s.mode==='reverse'&&!s.firstReverse?`<label>직전 5거래일 종가<textarea name="closes" rows="6" required placeholder="2026-09-21 50.25">${esc(dates)}</textarea></label><p>한 줄에 날짜와 종가를 입력하세요. 실제 직전 미국 거래일 5개인지 확인하세요.</p>`:''):'')+'<p>수수료 여유액을 제외한 예산으로 계산합니다.</p>');
+  }
+  async function strategySave(base,doc) {
+    StrategyEngine.evaluateBook(doc);
+    const id=base?.id||crypto.randomUUID(),hid=house.id,sessionGeneration=generation;
+    await checked(db.rpc('save_strategy_book',{p_household_id:hid,p_id:id,p_document:doc,p_expected_revision:base?.revision||0}));
+    if(generation!==sessionGeneration||house?.id!==hid)return;
+    strategyId=id;$('#editor').close();await refresh(false);dashboard();notice('전략 기록을 저장했습니다.');
+  }
+  async function submitStrategy(form,f) {
+    const kind=form.dataset.form,base=form.strategyBase,doc=base?strategyClone(base.document):{config:{},records:[],quote:null};
+    if(kind==='strategy-plan') {
+      const input={...f,closes:f.closes?.trim().split(/\r?\n/).filter(Boolean).map(line=>{const [date,price,...rest]=line.trim().split(/[\s,]+/);if(rest.length)throw Error('종가 입력 형식을 확인하세요.');return {date,price};})};
+      const plan=StrategyEngine.orderPlan(doc,input);form.strategyPlan=plan;
+      $('#strategy-result').innerHTML=`<h3>${esc(plan.phase)}</h3><p><span>매수 예산</span>: ${strategyUSD(plan.budget)}</p><div class="oh-portfolio-table"><table><thead><tr><th>종류</th><th>주문 방식</th><th>가격 (USD)</th><th>수량</th></tr></thead><tbody>${plan.rows.map(x=>`<tr><th>${x.side==='buy'?'매수':'매도'}</th><td>${esc(x.type)}</td><td>${x.price===null?'종가 시장가':strategyUSD(x.price)}</td><td>${x.quantity}</td></tr>`).join('')}</tbody></table></div>${!plan.rows.length?'<p>예산 안에서 주문 가능한 수량이 없습니다.</p>':''}${plan.notes.map(n=>`<p>${esc(n)}</p>`).join('')}${btn('strategy-plan-export','주문표 CSV')}`;return;
+    }
+    if(kind==='strategy-import') {
+      const file=form.elements.file.files[0];if(!file||file.size>2097152)throw Error('2MB 이하의 전략 백업 파일을 선택하세요.');
+      const parsed=JSON.parse(await file.text());if(parsed.format!=='ourhome-strategy'||!parsed.document)throw Error('전략 백업 파일을 선택하세요.');
+      const imported=parsed.document;imported.config.accountId='';imported.config.archived=false;imported.config.name=(imported.config.name+' (복원)').slice(0,80);await strategySave(null,imported);return;
+    }
+    if(kind==='strategy-config') {
+      const old=doc.config,locked=doc.records.length>0;
+      doc.config={...old,name:f.name.trim(),owner:f.owner,accountId:f.accountId||''};
+      if(!locked)Object.assign(doc.config,{kind:f.kind,symbol:f.symbol,splits:Number(f.splits||40),style:f.style||'accumulate',g:Number(f.g||10),initialV:f.initialV||'1'});
+    } else if(kind==='strategy-quote')doc.quote={date:f.date,price:f.price};
+    else {
+      const id=form.dataset.id||crypto.randomUUID(),r={id,date:f.date,sequence:Number(f.sequence)};
+      if(kind==='strategy-event')Object.assign(r,{type:f.type,currency:'USD',memo:f.memo||''},['buy','sell'].includes(f.type)?{quantity:f.quantity,price:f.price,fee:f.fee}:{amount:f.amount});
+      if(kind==='strategy-settle')Object.assign(r,{type:'settle',buyFraction:f.buyFraction,sellKind:f.sellKind,close:f.close,brokerAverage:f.brokerAverage||''});
+      if(kind==='strategy-cycle')Object.assign(r,{type:'cycle',g:Number(f.g),contribution:f.contribution,withdrawal:f.withdrawal});
+      const i=doc.records.findIndex(x=>x.id===id);if(i<0)doc.records.push(r);else doc.records[i]=r;
+      if(doc.quote&&r.date>doc.quote.date)doc.quote=null;
+    }
+    await strategySave(base,doc);
+  }
+  async function strategyAction(name,id) {
+    const row=strategyRow(id||strategyId);
+    if(name==='strategy-new')return strategyNew();
+    if(name==='strategy-market')return strategyMarket();
+    if(name==='strategy-select'){strategyId=id;strategyPage=0;dashboard();return;}
+    if(name==='strategy-archived'){strategyArchived=!strategyArchived;strategyId='';dashboard();return;}
+    if(name==='strategy-more-history'){strategyHistoryLimit+=20;dashboard();return;}
+    if(name==='strategy-import')return strategyForm('새 전략으로 가져오기','strategy-import',null,'<label>전략 백업 파일<input type="file" name="file" accept=".json,application/json" required></label><p>기존 전략을 덮어쓰지 않고 새 전략으로 복원합니다. 중복된 전략은 보관하세요.</p>');
+    if(name==='strategy-plan-export') {const p=$('#editor form')?.strategyPlan;if(!p)throw Error('주문표를 다시 계산하세요.');download('strategy-orders-'+today()+'.csv','\ufeff'+[['side','order_type','limit_USD','quantity'],...p.rows.map(r=>[r.side,r.type,r.price??'',r.quantity])].map(r=>r.map(csvCell).join(',')).join('\r\n'),'text/csv');return;}
+    if(name==='strategy-restore-record') {
+      const key=JSON.parse(id),change=(data.strategy_book_changes||[]).find(x=>String(x.id)===String(key.changeId)),item=change?.changed_records[key.index];
+      const base=change&&strategyRow(change.book_id);if(!base||item?.after||!item?.before)throw Error('복구할 삭제 기록을 찾을 수 없습니다.');
+      const doc=strategyClone(base.document);if(doc.records.some(r=>r.id===item.before.id))throw Error('이미 같은 기록이 있습니다.');
+      doc.records.push(strategyClone(item.before));if(doc.quote&&item.before.date>doc.quote.date)doc.quote=null;await strategySave(base,doc);return;
+    }
+    if(name==='strategy-edit'||name==='strategy-remove') {
+      const base=$('#editor').strategyBase;if(!base)throw Error('기록을 다시 열어 주세요.');const r=base.document.records.find(x=>x.id===id);if(!r)throw Error('기록을 찾을 수 없습니다.');
+      if(name==='strategy-edit'){if(r.type==='settle')strategySettle(base,id);else if(r.type==='cycle')strategyCycle(base,id);else strategyEvent(base,id);return;}
+      if(!confirm('이 기록을 삭제하고 이후 계산을 다시 할까요?'))return;
+      const doc=strategyClone(base.document);doc.records=doc.records.filter(x=>x.id!==id);await strategySave(base,doc);return;
+    }
+    if(!row)throw Error('전략을 선택해 주세요.');
+    if(name==='strategy-config')return strategyNew(row);
+    if(name==='strategy-event')return strategyEvent(row);
+    if(name==='strategy-settle')return strategySettle(row);
+    if(name==='strategy-cycle')return strategyCycle(row);
+    if(name==='strategy-quote')return strategyForm('평가가격 입력','strategy-quote',row,strategyDateField('date','평가가격 기준일',row.document.quote?.date||strategyToday())+strategyDecimal('price','평가가격 (USD)',row.document.quote?.price||''));
+    if(name==='strategy-plan')return strategyPlan(row);
+    if(name==='strategy-export'){download('strategy-'+today()+'.json',JSON.stringify({format:'ourhome-strategy',version:1,document:row.document},null,2),'application/json');return;}
+    if(name==='strategy-archive'){const doc=strategyClone(row.document);doc.config.archived=!doc.config.archived;await strategySave(row,doc);return;}
+    if(name==='strategy-prev')strategyPage--;
+    if(name==='strategy-next')strategyPage++;
+    return strategyRecords(row);
+  }
+  const STRATEGY_STYLES=`#ourhome-v11 .oh-strategy-market{display:block;border:0;width:100%;height:460px;background:white;border-radius:10px}#ourhome-v11 .oh-strategy-tools a{padding:12px}#ourhome-v11 .oh-strategy-workflow{border:1px solid var(--oh-line);border-radius:14px;padding:16px;margin:16px 0}#ourhome-v11 .oh-strategy-workflow ol{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;padding-left:24px}#ourhome-v11 .oh-strategy-workflow li{padding:4px}#ourhome-v11 .oh-strategy-workflow p{line-height:1.65}#ourhome-v11 .oh-strategy-pills button small{color:inherit!important}@media(max-width:700px){#ourhome-v11 .oh-strategy-workflow ol{grid-template-columns:1fr}}#ourhome-v11 .oh-strategy-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:18px 0}#ourhome-v11 .oh-strategy-metrics article{padding:16px;background:var(--oh-soft);border:1px solid var(--oh-line);border-radius:14px;min-width:0}#ourhome-v11 .oh-strategy-metrics strong{display:block;font-size:22px;margin:8px 0;color:var(--oh-ink)!important;overflow-wrap:anywhere}#ourhome-v11 .oh-strategy-tools{display:flex;flex-wrap:wrap;gap:4px;align-items:center}#ourhome-v11 .oh-strategy-pills{display:flex;overflow-x:auto;padding:8px 2px}#ourhome-v11 .oh-strategy-pills button{white-space:nowrap}#ourhome-v11 .oh-strategy-pills [aria-pressed=true]{outline:3px solid var(--oh-line)}#ourhome-v11 .oh-strategy-state{padding:18px;border:1px solid var(--oh-line);border-radius:14px;margin:16px 0}#ourhome-v11 .oh-strategy-chart{margin:18px 0;padding:12px;border:1px solid var(--oh-line);border-radius:14px}#ourhome-v11 .oh-strategy-chart svg{display:block;width:100%;height:auto}#ourhome-v11 .oh-strategy-record{padding:14px 0;border-bottom:1px solid var(--oh-line)}#ourhome-v11 textarea{display:block;width:100%;font:inherit;padding:10px;background:var(--oh-card,#fff);color:var(--oh-ink);border:1px solid var(--oh-line);border-radius:8px;margin-top:8px}#ourhome-v11 fieldset{border:1px solid var(--oh-line);border-radius:10px;min-width:0}#ourhome-v11 [data-strategy-kind][hidden],#ourhome-v11 [data-trade][hidden]{display:none!important}@media(max-width:620px){#ourhome-v11 .oh-strategy-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}#ourhome-v11 .oh-strategy-metrics strong{font-size:18px}#ourhome-v11 .oh-strategy-tools button{flex:1 1 42%;margin:2px}}`;
+
   async function start() {
     document.documentElement.lang='ko';
     root=document.createElement('main'); root.id='ourhome-v11'; document.body.replaceChildren(root);
-    const style=document.createElement('style'); style.textContent=`body{margin:0;background:#f3f6f5;color:#18342e;font-family:system-ui,sans-serif}#ourhome-v11{max-width:1000px;margin:auto;padding:24px 18px 60px}#ourhome-v11 *{box-sizing:border-box}#ourhome-v11 header,.toolbar,.row{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}#ourhome-v11 h1{font-size:26px;margin:8px 0}#ourhome-v11 h2{font-size:21px}#ourhome-v11 h3{margin:9px 0}#ourhome-v11 small{color:#536c64}#ourhome-v11 .card{background:white;padding:22px;border:1px solid #dce6df;border-radius:18px;margin:14px 0}#ourhome-v11 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}#ourhome-v11 button{background:#176950;color:white;border:0;border-radius:10px;padding:12px 16px;margin:4px;cursor:pointer;font:inherit}#ourhome-v11 button[aria-current=page]{background:#133d30;outline:3px solid #b8dacb}#ourhome-v11 label{display:block;margin:12px 0}#ourhome-v11 input,#ourhome-v11 select{display:block;width:100%;font:inherit;padding:12px;border:1px solid #bccfc5;border-radius:9px;margin-top:6px;background:white;color:#18342e}#ourhome-v11 nav{display:flex;gap:4px;flex-wrap:wrap;margin:18px 0}#ourhome-v11 progress{width:100%;accent-color:#176950}#ourhome-v11 dialog{border:0;border-radius:18px;padding:24px;width:min(94vw,520px);max-height:90vh;overflow:auto}#ourhome-v11 dialog::backdrop{background:#16392e88}#ourhome-v11 .auth{max-width:440px;margin:40px auto}#notice{white-space:pre-wrap;color:#8a3a16}#ourhome-v11 p{overflow-wrap:anywhere}#ourhome-v11 [aria-busy=true]{opacity:.7}`; document.head.append(style); const theme=document.createElement('style'); theme.textContent=THEME; document.head.append(theme); const assetStyle=document.createElement('style');assetStyle.textContent=ASSET_STYLES+FUNDING_STYLES+SNAPSHOT_STYLES+PORTFOLIO_STYLES;document.head.append(assetStyle);
+    const style=document.createElement('style'); style.textContent=`body{margin:0;background:#f3f6f5;color:#18342e;font-family:system-ui,sans-serif}#ourhome-v11{max-width:1000px;margin:auto;padding:24px 18px 60px}#ourhome-v11 *{box-sizing:border-box}#ourhome-v11 header,.toolbar,.row{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}#ourhome-v11 h1{font-size:26px;margin:8px 0}#ourhome-v11 h2{font-size:21px}#ourhome-v11 h3{margin:9px 0}#ourhome-v11 small{color:#536c64}#ourhome-v11 .card{background:white;padding:22px;border:1px solid #dce6df;border-radius:18px;margin:14px 0}#ourhome-v11 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}#ourhome-v11 button{background:#176950;color:white;border:0;border-radius:10px;padding:12px 16px;margin:4px;cursor:pointer;font:inherit}#ourhome-v11 button[aria-current=page]{background:#133d30;outline:3px solid #b8dacb}#ourhome-v11 label{display:block;margin:12px 0}#ourhome-v11 input,#ourhome-v11 select{display:block;width:100%;font:inherit;padding:12px;border:1px solid #bccfc5;border-radius:9px;margin-top:6px;background:white;color:#18342e}#ourhome-v11 nav{display:flex;gap:4px;flex-wrap:wrap;margin:18px 0}#ourhome-v11 progress{width:100%;accent-color:#176950}#ourhome-v11 dialog{border:0;border-radius:18px;padding:24px;width:min(94vw,520px);max-height:90vh;overflow:auto}#ourhome-v11 dialog::backdrop{background:#16392e88}#ourhome-v11 .auth{max-width:440px;margin:40px auto}#notice{white-space:pre-wrap;color:#8a3a16}#ourhome-v11 p{overflow-wrap:anywhere}#ourhome-v11 [aria-busy=true]{opacity:.7}`; document.head.append(style); const theme=document.createElement('style'); theme.textContent=THEME; document.head.append(theme); const assetStyle=document.createElement('style');assetStyle.textContent=ASSET_STYLES+FUNDING_STYLES+SNAPSHOT_STYLES+PORTFOLIO_STYLES+STRATEGY_STYLES;document.head.append(assetStyle);
     applyAppearance();observeLanguage();
     draw('<p>연결 중입니다…</p>');
     db=typeof supabaseClient!=='undefined'?supabaseClient:window.supabaseClient;
@@ -1141,6 +1952,8 @@ Frankfurter 일별 참고환율|Frankfurterの日次参考レート
     root.addEventListener('input', e=>{ if(e.target.id==='search') { searchText=e.target.value; renderSearchResults(); } });
     root.addEventListener('change', e=>{ if(e.target.id==='filter-type') { filterType=e.target.value; renderSearchResults(); } if(e.target.id==='filter-owner') { filterOwner=e.target.value; renderSearchResults(); } });
     root.addEventListener('input',moneyInput);
+    root.addEventListener('change',e=>{const f=e.target.closest('form');if(f?.dataset.form?.startsWith('strategy-'))strategyToggle(f,e.target.name);});
+    root.addEventListener('input',e=>{const f=e.target.closest('form');if(f?.dataset.form==='strategy-plan'){f.strategyPlan=null;$('#strategy-result').innerHTML='';}});
     root.addEventListener('input',e=>{const form=e.target.closest('form');if(form?.dataset.form==='portfolio-target')portfolioWeightTotal(form);if(form?.dataset.form==='portfolio-plan')$('#portfolio-plan-result').innerHTML='';});
     root.addEventListener('input',e=>{if(['theme-background','theme-button'].includes(e.target.id)&&validColor(e.target.value)){appearance[e.target.id==='theme-background'?'background':'button']=e.target.value;appearance.preset='custom';applyAppearance();for(const x of root.querySelectorAll('[data-theme-hex]'))x.textContent=appearance[x.dataset.themeHex];for(const b of root.querySelectorAll('.theme-options button'))b.setAttribute('aria-pressed','false');}});
     root.addEventListener('change',e=>{if(['theme-background','theme-button'].includes(e.target.id))saveAppearance();});
@@ -1159,6 +1972,3 @@ Frankfurter 일별 참고환율|Frankfurterの日次参考レート
   }
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',start,{once:true}); else start();
 })();
-
-
-
